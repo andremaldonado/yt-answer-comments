@@ -1,0 +1,26 @@
+# Binaries for programs and plugins
+answer-comments
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Output from go test
+*.test
+
+# MacOS
+.DS_Store
+
+# Editor temp files
+*~
+*.swp
+
+# Credentials and tokens
+client_secret.json
+token.json
+
+# Logs
+comment_log.csv
+
+# Vendor and build directories (if any)
+vendor/
