@@ -81,32 +81,6 @@ Observações sobre quando o arquivo é escrito:
 - O registro só é escrito se a `nota` retornada pelo LLM for maior ou igual a 5. Comentários com `nota < 5` são automaticamente pulados (não são logados nem perguntados para publicação).
 - Se houver falha ao abrir/escrever o arquivo `comment_log.csv`, o programa registra um aviso com `log.Printf` (não encerra a execução) e continua.
 
-Mensagens de log e comportamento de término:
-- Mensagens escritas com `log.Fatalf` / `log.Fatal` encerram o programa imediatamente. Exemplos onde isso acontece:
-	- `client_secret.json` não encontrado ou inválido
-	- falha ao analisar o JSON de credenciais
-	- falha ao salvar `token.json` (em pontos críticos do fluxo)
-	- variável de ambiente `GEMINI_API_KEY` não configurada
-	- erro crítico ao criar o serviço do YouTube
-- Mensagens escritas com `log.Printf` / `log.Print` são informativas e não encerram o programa; normalmente são usadas para reportar problemas recuperáveis (por exemplo, falha ao abrir o arquivo de log ou ao publicar uma resposta).
-
-Suprimindo ou redirecionando logs
-- O pacote `log` do Go escreve no stderr por padrão. Para suprimir mensagens de log fatais e não-fatais, redirecione o stderr ao executar:
-
-```bash
-# suprimir logs
-./answer-comments 2>/dev/null
-
-# redirecionar logs para um arquivo
-./answer-comments 2>app-errors.log
-```
-
-Se preferir manter apenas os prints interativos no stdout, redirecione stderr para outro arquivo e leia-o separadamente.
-
-Onde o token é salvo
-- Quando o fluxo de autorização recebe o código, o token de acesso/refresh é salvo em `token.json` (permissões 0600). O programa imprime uma linha informando onde salvou: `Salvando o arquivo de credenciais em: token.json`.
-
-
 ## Troubleshooting
 
 - Erro: `Não foi possível ler o arquivo client_secret.json` — coloque `client_secret.json` na raiz do projeto e verifique permissões.
