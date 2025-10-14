@@ -217,12 +217,45 @@ func main() {
 				}
 
 				// Show suggested answer and note
-				fmt.Printf("Sugestão de resposta: %s\n\n", suggestedAnswer.Resposta)
+				answer := strings.TrimSpace(suggestedAnswer.Resposta)
+				fmt.Printf("Sugestão de resposta: %s\n\n", answer)
 				fmt.Printf("Nota de entendimento atribuída: %d\n", suggestedAnswer.Nota)
 
-				if suggestedAnswer.Nota < 5 {
-					fmt.Println("⚠️ A nota de entendimento é menor que 5. Pulando comentário.")
-					continue // Jump to the next comment
+				// Check the answer with the user
+				fmt.Printf("\nDeseja publicar esta resposta? (S/N/E/Q para sair): ")
+				input, _ := reader.ReadString('\n')
+				input = strings.TrimSpace(strings.ToUpper(input))
+
+				switch input {
+				case "S":
+					err := publishComment(service, comment.Snippet.VideoId, comment.Id, answer)
+					if err != nil {
+						log.Printf("Falha ao publicar resposta: %v", err)
+						fmt.Println("Erro ao publicar a resposta. Tente novamente mais tarde.")
+					} else {
+						fmt.Println("✅ Resposta publicada com sucesso!")
+					}
+				case "E":
+					fmt.Print("Digite a resposta que deseja publicar:\n> ")
+					editedAnswer, _ := reader.ReadString('\n')
+					editedAnswer = strings.TrimSpace(editedAnswer)
+					answer = editedAnswer
+					if editedAnswer == "" {
+						fmt.Println("🚫 Resposta vazia. Seguindo para o próximo comentário.")
+						break
+					}
+					err := publishComment(service, comment.Snippet.VideoId, comment.Id, editedAnswer)
+					if err != nil {
+						log.Printf("Falha ao publicar resposta: %v", err)
+						fmt.Println("Erro ao publicar a resposta. Tente novamente mais tarde.")
+					} else {
+						fmt.Println("✅ Resposta editada publicada com sucesso!")
+					}
+				case "Q":
+					fmt.Println("Encerrando a aplicação.")
+					return
+				default:
+					fmt.Println("🚫 Resposta não publicada. Seguindo para o próximo comentário.")
 				}
 
 				// Log comment and suggestion to a file
@@ -237,29 +270,8 @@ func main() {
 						brTime.Format("02/01/2006 às 15:04"),
 						strings.Replace(comment.Snippet.TextOriginal, ";", ",", -1),
 						suggestedAnswer.Nota,
-						strings.Replace(suggestedAnswer.Resposta, ";", ",", -1),
+						strings.Replace(answer, ";", ",", -1),
 					)
-				}
-
-				// Check the answer with the user
-				fmt.Printf("\nDeseja publicar esta resposta? (S/N/Q para sair): ")
-				input, _ := reader.ReadString('\n')
-				input = strings.TrimSpace(strings.ToUpper(input))
-
-				switch input {
-				case "S":
-					err := publishComment(service, comment.Snippet.VideoId, comment.Id, suggestedAnswer.Resposta)
-					if err != nil {
-						log.Printf("Falha ao publicar resposta: %v", err)
-						fmt.Println("Erro ao publicar a resposta. Tente novamente mais tarde.")
-					} else {
-						fmt.Println("✅ Resposta publicada com sucesso!")
-					}
-				case "Q":
-					fmt.Println("Encerrando a aplicação.")
-					return
-				default:
-					fmt.Println("🚫 Resposta não publicada. Seguindo para o próximo comentário.")
 				}
 
 				fmt.Println("")
