@@ -137,14 +137,30 @@ func main() {
 				fmt.Printf("%sAutor: %s (Publicado em: %s)\n", authorPrefix, comment.Snippet.AuthorDisplayName, brTime.Format("02/01/2006 às 15:04"))
 				fmt.Printf("Comentário: %s\n", comment.Snippet.TextDisplay)
 
+				// Analyze comment with Gemini
+				sentiment, err := analyzeComment(ctx, comment.Snippet.TextOriginal, geminiClient)
+				if err != nil {
+					fmt.Println("⚠️ Não foi possível analisar o sentimento deste comentário, pulando para o próximo.")
+					fmt.Println("Error:", err)
+					os.Exit(1)
+					continue // Jump to the next comment
+				}
+				fmt.Printf("Análise de sentimento: %s | Nota de entendimento: %d\n", sentiment.Sentimento, sentiment.Nota)
+
+				// Skip very negative comments
+				if sentiment.Sentimento == "negativo" && sentiment.Nota <= 3 {
+					fmt.Println("⚠️ Comentário identificado como negativo e difícil de responder. Pulando para o próximo comentário.")
+					continue // Jump to the next comment
+				}
+
 				// Suggest answer using Gemini
 				fmt.Println("")
 				fmt.Println("Gerando sugestão de resposta...")
 				fmt.Println("")
-				suggestedAnswer := LLMSuggestion{}
+				var suggestedAnswer string
 				suggestedAnswer, err = suggestAnswer(ctx, comment.Snippet.TextOriginal, videoTitle, videoDescription, geminiClient)
 
-				if suggestedAnswer.Resposta == "" || err != nil {
+				if suggestedAnswer == "" || err != nil {
 					fmt.Println("⚠️ Não foi possível gerar uma sugestão de resposta para este comentário.")
 					fmt.Println("🚫 Resposta não publicada. Seguindo para o próximo comentário.")
 					fmt.Println("Error:", err)
@@ -153,9 +169,8 @@ func main() {
 				}
 
 				// Show suggested answer and note
-				answer := strings.TrimSpace(suggestedAnswer.Resposta)
+				answer := strings.TrimSpace(suggestedAnswer)
 				fmt.Printf("Sugestão de resposta: %s\n\n", answer)
-				fmt.Printf("Nota de entendimento atribuída: %d\n", suggestedAnswer.Nota)
 
 				// Check the answer with the user
 				fmt.Printf("\nDeseja publicar esta resposta? (S/N/E/Q para sair): ")
@@ -195,7 +210,7 @@ func main() {
 				}
 
 				// Log comment and suggestion to a file
-				addToLog(comment, brTime, suggestedAnswer, answer)
+				addToLog(comment, brTime, sentiment.Nota, answer)
 
 				fmt.Println("")
 			}
@@ -221,7 +236,7 @@ func main() {
 }
 
 // addToLog appends the comment and its suggested answer to a CSV log file.
-func addToLog(comment *youtube.Comment, brTime time.Time, suggestedAnswer LLMSuggestion, answer string) {
+func addToLog(comment *youtube.Comment, brTime time.Time, nota int, answer string) {
 	logFile, err := os.OpenFile("comment_log.csv", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		log.Printf("Não foi possível abrir o arquivo de log: %v", err)
@@ -232,7 +247,7 @@ func addToLog(comment *youtube.Comment, brTime time.Time, suggestedAnswer LLMSug
 			strings.ReplaceAll(comment.Snippet.AuthorDisplayName, ";", ","),
 			brTime.Format("02/01/2006 às 15:04"),
 			strings.ReplaceAll(strings.ReplaceAll(comment.Snippet.TextOriginal, ";", ","), "\n", " "),
-			suggestedAnswer.Nota,
+			nota,
 			strings.ReplaceAll(strings.ReplaceAll(answer, ";", ","), "\n", " "),
 		)
 	}
