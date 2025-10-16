@@ -8,13 +8,16 @@ O programa busca comentários não respondidos do canal autenticado, gera uma su
 
 - Go 1.25.1 (conforme `go.mod`)
 - Conta Google com um canal YouTube
-- Credenciais OAuth 2.0 (arquivo `client_secret.json`) configuradas na Google Cloud Console
+- Credenciais OAuth 2.0 (arquivo `client_secret.json`) configuradas na Google Cloud Console para o uso da DataAPI V3 do YouTube
 - Variável de ambiente `GEMINI_API_KEY` com a chave da API usada pelo pacote `google.golang.org/genai`
 
 ## Arquivos importantes
 
 - `main.go` - código fonte principal
+- `llm.go`- código fonte relacionado ãs configruações, prompts e chamadas à API da LLM
+- `youtube.go` - código fonte relacionado à configurações e chamadas para a API do Youtube
 - `go.mod` / `go.sum` - dependências do projeto
+- `members.csv` - caso queira identificar membros do canal (necessário exportar CSV diretamente do Youtube Studio pois a API de membros necessita de aprovação de um Youtube Partner Manager). Este arquivo é opcional.
 
 ## Configuração do Google API
 
@@ -24,7 +27,7 @@ O programa busca comentários não respondidos do canal autenticado, gera uma su
 4. Baixe o arquivo JSON de credenciais e renomeie/posicione como `client_secret.json` na raiz do repositório. Nunca faça commit desse arquivo.
 5. Configure a tela de consentimento OAuth se solicitado (pelo menos para uso em modo teste).
 
-Observação: o programa usa o escopo `youtube.YoutubeForceSslScope` (acesso para publicar comentários em nome do canal autenticado).
+Observação: o programa usa o escopo `youtube.YoutubeForceSslScope` (acesso para publicar comentários em nome do canal autenticado)
 
 ## Obtendo a GEMINI_API_KEY
 
@@ -44,7 +47,7 @@ Na raiz do projeto:
 
 ```bash
 # Instalar dependências e executar diretamente
-go run main.go
+go run .
 
 # Ou compilar e executar o binário
 go build -o answer-comments

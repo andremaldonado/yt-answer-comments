@@ -3,99 +3,19 @@ package main
 import (
 	"bufio"
 	"context"
-	"encoding/json"
+	"encoding/csv"
 	"fmt"
 	"log"
-	"net/http"
 	"os"
 	"strings"
 	"time"
 
-	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 	"google.golang.org/api/option"
 	"google.golang.org/api/youtube/v3"
 
 	"google.golang.org/genai"
 )
-
-// LLMSuggestion is the structure for the LLM's suggested answer and understanding score.
-type LLMSuggestion struct {
-	Nota     int    `json:"nota"`
-	Resposta string `json:"resposta"`
-}
-
-// getClient uses a Context and Config to retrieve a Token
-// then generate a Client. It returns the generated Client.
-func getClient(config *oauth2.Config) *http.Client {
-	tokFile := "token.json"
-	tok, err := tokenFromFile(tokFile)
-	if err != nil {
-		tok = getTokenFromWeb(config)
-		saveToken(tokFile, tok)
-	}
-	return config.Client(context.Background(), tok)
-}
-
-// getTokenFromWeb uses the OAuth2 config to request a token from the web, then returns the retrieved token.
-func getTokenFromWeb(config *oauth2.Config) *oauth2.Token {
-	authURL := config.AuthCodeURL("state-token", oauth2.AccessTypeOffline)
-	fmt.Printf("Acesse esta URL no seu navegador para autorizar o aplicativo: \n%v\n", authURL)
-	fmt.Printf("\nApós autorizar, cole o código de autorização aqui e pressione Enter: ")
-
-	var authCode string
-	if _, err := fmt.Scan(&authCode); err != nil {
-		log.Fatalf("Não foi possível ler o código de autorização: %v", err)
-	}
-
-	tok, err := config.Exchange(context.TODO(), authCode)
-	if err != nil {
-		log.Fatalf("Não foi possível obter o token a partir do código: %v", err)
-	}
-	return tok
-}
-
-// tokenFromFile reads a token from a file path.
-func tokenFromFile(file string) (*oauth2.Token, error) {
-	f, err := os.Open(file)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-	tok := &oauth2.Token{}
-	err = json.NewDecoder(f).Decode(tok)
-	return tok, err
-}
-
-// saveToken to save a token to a file path.
-func saveToken(path string, token *oauth2.Token) {
-	fmt.Printf("Salvando o arquivo de credenciais em: %s\n", path)
-	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0600)
-	if err != nil {
-		log.Fatalf("Não foi possível salvar o token: %v", err)
-	}
-	defer f.Close()
-	json.NewEncoder(f).Encode(token)
-}
-
-// publishComment to publish a reply to a comment on YouTube.
-func publishComment(service *youtube.Service, videoId, parentCommentId, text string) error {
-	comment := &youtube.Comment{
-		Snippet: &youtube.CommentSnippet{
-			ParentId:     parentCommentId,
-			TextOriginal: text,
-		},
-	}
-	// A API Comments.Insert exige o part="snippet" e o id do tópico (parentCommentId)
-	// para que o comentário seja uma resposta.
-	// O canal que responde é o autenticado.
-	call := service.Comments.Insert([]string{"snippet"}, comment)
-	_, err := call.Do()
-	if err != nil {
-		return fmt.Errorf("erro ao publicar resposta: %v", err)
-	}
-	return nil
-}
 
 func main() {
 	ctx := context.Background()
@@ -105,18 +25,19 @@ func main() {
 		log.Fatalf("Não foi possível ler o arquivo client_secret.json: %v", err)
 	}
 
-	config, err := google.ConfigFromJSON(b, youtube.YoutubeForceSslScope)
+	// Load OAuth2 config for YouTube
+	config, err := google.ConfigFromJSON(b, youtube.YoutubeForceSslScope, youtube.YoutubeChannelMembershipsCreatorScope)
 	if err != nil {
 		log.Fatalf("Não foi possível analisar o arquivo de segredo do cliente: %v", err)
 	}
-
-	client := getClient(config)
+	client := getYoutubeClient(config)
 
 	service, err := youtube.NewService(ctx, option.WithHTTPClient(client))
 	if err != nil {
 		log.Fatalf("Erro ao criar o serviço do YouTube: %v", err)
 	}
 
+	// Get the authenticated user's channel ID
 	channelResponse, err := service.Channels.List([]string{"id"}).Mine(true).Do()
 	if err != nil {
 		log.Fatalf("Erro ao obter o ID do canal: %v", err)
@@ -127,6 +48,14 @@ func main() {
 	myChannelId := channelResponse.Items[0].Id
 	fmt.Printf("Autenticado com sucesso! ID do seu canal: %s\n\n", myChannelId)
 
+	// load members from CSV
+	membersMap, err := loadMembersFromCSV("members.csv")
+	if err != nil {
+		log.Fatalf("Não foi possível carregar a lista de membros: %v", err)
+	}
+	fmt.Printf("Carregados %d membros a partir do arquivo.\n", len(membersMap))
+
+	// Initialize Gemini client
 	geminiAPIKey := os.Getenv("GEMINI_API_KEY")
 	if geminiAPIKey == "" {
 		log.Fatal("A variável de ambiente GEMINI_API_KEY não está configurada.")
@@ -139,6 +68,7 @@ func main() {
 		log.Fatal(err)
 	}
 
+	// Prepare to read user input
 	reader := bufio.NewReader(os.Stdin)
 	var pageToken string
 
@@ -181,6 +111,12 @@ func main() {
 			if !isAnsweredByMe {
 				foundUnanswered = true
 
+				isMember := membersMap[comment.Snippet.AuthorChannelId.Value]
+				authorPrefix := ""
+				if isMember {
+					authorPrefix = "⭐ MEMBRO ⭐ "
+				}
+
 				// Find the video title and description
 				videoCall := service.Videos.List([]string{"snippet"}).Id(comment.Snippet.VideoId)
 				videoResp, err := videoCall.Do()
@@ -198,7 +134,7 @@ func main() {
 				fmt.Println("------------------------------------------------------------------")
 				brTime := commentPublishedAt.In(time.FixedZone("BRT", -3*60*60))
 				fmt.Printf("Título do vídeo: %s\n", videoTitle)
-				fmt.Printf("Autor: %s (Publicado em: %s)\n", comment.Snippet.AuthorDisplayName, brTime.Format("02/01/2006 às 15:04"))
+				fmt.Printf("%sAutor: %s (Publicado em: %s)\n", authorPrefix, comment.Snippet.AuthorDisplayName, brTime.Format("02/01/2006 às 15:04"))
 				fmt.Printf("Comentário: %s\n", comment.Snippet.TextDisplay)
 
 				// Suggest answer using Gemini
@@ -228,7 +164,7 @@ func main() {
 
 				switch input {
 				case "S":
-					err := publishComment(service, comment.Snippet.VideoId, comment.Id, answer)
+					err := publishComment(service, comment.Id, answer)
 					if err != nil {
 						log.Printf("Falha ao publicar resposta: %v", err)
 						fmt.Println("Erro ao publicar a resposta. Tente novamente mais tarde.")
@@ -244,7 +180,7 @@ func main() {
 						fmt.Println("🚫 Resposta vazia. Seguindo para o próximo comentário.")
 						break
 					}
-					err := publishComment(service, comment.Snippet.VideoId, comment.Id, editedAnswer)
+					err := publishComment(service, comment.Id, editedAnswer)
 					if err != nil {
 						log.Printf("Falha ao publicar resposta: %v", err)
 						fmt.Println("Erro ao publicar a resposta. Tente novamente mais tarde.")
@@ -259,20 +195,7 @@ func main() {
 				}
 
 				// Log comment and suggestion to a file
-				logFile, err := os.OpenFile("comment_log.csv", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-				if err != nil {
-					log.Printf("Não foi possível abrir o arquivo de log: %v", err)
-				} else {
-					defer logFile.Close()
-					logger := log.New(logFile, "", log.LstdFlags)
-					logger.Printf("%s;%s;%s;%d;%s\n",
-						strings.Replace(comment.Snippet.AuthorDisplayName, ";", ",", -1),
-						brTime.Format("02/01/2006 às 15:04"),
-						strings.Replace(comment.Snippet.TextOriginal, ";", ",", -1),
-						suggestedAnswer.Nota,
-						strings.Replace(answer, ";", ",", -1),
-					)
-				}
+				addToLog(comment, brTime, suggestedAnswer, answer)
 
 				fmt.Println("")
 			}
@@ -297,51 +220,66 @@ func main() {
 	}
 }
 
-// suggestAnswer uses the Gemini model to generate a suggested answer for a given comment.
-func suggestAnswer(ctx context.Context, comment string, videoTitle string, videoDescription string, genaiClient *genai.Client) (LLMSuggestion, error) {
-	prompt := getAnswerPrompt(comment, videoTitle, videoDescription)
-
-	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
-	defer cancel()
-
-	resp, err := genaiClient.Models.GenerateContent(
-		ctx,
-		"gemini-2.5-flash",
-		genai.Text(prompt),
-		nil,
-	)
+// addToLog appends the comment and its suggested answer to a CSV log file.
+func addToLog(comment *youtube.Comment, brTime time.Time, suggestedAnswer LLMSuggestion, answer string) {
+	logFile, err := os.OpenFile("comment_log.csv", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
-		return LLMSuggestion{}, fmt.Errorf("erro ao gerar conteúdo com Gemini: %w", err)
+		log.Printf("Não foi possível abrir o arquivo de log: %v", err)
+	} else {
+		defer logFile.Close()
+		logger := log.New(logFile, "", log.LstdFlags)
+		logger.Printf("%s;%s;%s;%d;%s\n",
+			strings.ReplaceAll(comment.Snippet.AuthorDisplayName, ";", ","),
+			brTime.Format("02/01/2006 às 15:04"),
+			strings.ReplaceAll(strings.ReplaceAll(comment.Snippet.TextOriginal, ";", ","), "\n", " "),
+			suggestedAnswer.Nota,
+			strings.ReplaceAll(strings.ReplaceAll(answer, ";", ","), "\n", " "),
+		)
 	}
-
-	raw := resp.Text()
-	cleaned := strings.TrimPrefix(raw, "```json")
-	cleaned = strings.TrimPrefix(cleaned, "```")
-	cleaned = strings.TrimSuffix(cleaned, "```")
-	cleaned = strings.TrimSpace(cleaned)
-
-	var s LLMSuggestion
-	if err := json.Unmarshal([]byte(cleaned), &s); err != nil {
-		return LLMSuggestion{}, fmt.Errorf("parsing JSON LLM: %w; raw: %s", err, raw)
-	}
-	return s, nil
 }
 
-// getAnswerPrompt constructs the prompt for the LLM based on the comment and video context.
-func getAnswerPrompt(comment string, videoTitle string, videoDescription string) string {
-	prompt := fmt.Sprintf(`Você é o meu assistente e responde às mensagens que os inscritos do meu canal no Youtube me enviam. É um canal cristão protestante.
-	Suas respostas precisam estar relacionadas com o contexto, serem amigáveis e respeitosas.
-	Evite adjetivos desnecessários e prefira respostas curtas.
-	Para cada comentário, atribua uma nota de 1 a 5 de entendimento do que o comentário quer dizer. Considere que 1 é para um comentário difícil de responder,
-	como uma pergunta muito aberta e 5 é para um comentário muito simples, como uma saudação.
-	Sua resposta deve ser sempre no seguinte formato, sem nada além disso, nem mesmo uma marcação de json:
-	{
-		"nota": 0,
-		"resposta": "Sua resposta aqui"
+// loadMembersFromCSV lê um arquivo CSV com a lista de membros e retorna um mapa de Channel IDs.
+// O mapa é usado para uma verificação rápida (O(1) em média).
+func loadMembersFromCSV(filename string) (map[string]bool, error) {
+	// Abre o arquivo CSV
+	file, err := os.Open(filename)
+	if err != nil {
+		// Retorna um mapa vazio se o arquivo não existir, para que o programa não quebre.
+		if os.IsNotExist(err) {
+			fmt.Printf("Aviso: Arquivo de membros '%s' não encontrado. A identificação de membros estará desativada.\n", filename)
+			return make(map[string]bool), nil
+		}
+		return nil, fmt.Errorf("erro ao abrir o arquivo de membros: %w", err)
 	}
-	O comentário que você deve responder é este: "%s"
-	O título do vídeo onde o comentário foi feito é: "%s"
-	A descrição do vídeo onde o comentário foi feito é: "%s"
-	`, comment, videoTitle, videoDescription)
-	return prompt
+	defer file.Close()
+
+	// Verifica se o arquivo é mais antigo que 10 dias
+	fileInfo, err := file.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("erro ao obter informações do arquivo de membros: %w", err)
+	}
+	if time.Since(fileInfo.ModTime()) > 10*24*time.Hour {
+		fmt.Printf("ATENÇÃO: O arquivo de membros '%s' está desatualizado (última modificação em %s). Considere atualizá-lo.\n", filename, fileInfo.ModTime().Format("02/01/2006"))
+	}
+
+	// Cria um leitor de CSV
+	reader := csv.NewReader(file)
+	records, err := reader.ReadAll()
+	if err != nil {
+		return nil, fmt.Errorf("erro ao ler o arquivo de membros: %w", err)
+	}
+
+	members := make(map[string]bool)
+	if len(records) > 1 { // Pula o cabeçalho (linha 0)
+		// Assumindo que o ID do Canal está na primeira coluna (índice 0)
+		// IMPORTANTE: Verifique seu arquivo CSV para confirmar a coluna correta!
+		for _, record := range records[1:] {
+			if len(record) > 0 {
+				channelId := record[1]
+				members[channelId] = true
+			}
+		}
+	}
+
+	return members, nil
 }

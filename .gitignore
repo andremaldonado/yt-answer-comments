@@ -19,6 +19,9 @@ answer-comments
 client_secret.json
 token.json
 
+# members file
+members.csv
+
 # Logs
 comment_log.csv
 
