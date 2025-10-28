@@ -53,8 +53,14 @@ func analyzeComment(ctx context.Context, comment string, genaiClient *genai.Clie
 }
 
 // suggestAnswer uses the GenerationModel to produce a response text for a given comment.
-func suggestAnswer(ctx context.Context, comment string, videoTitle string, videoDescription string, genaiClient *genai.Client) (string, error) {
-	prompt := getAnswerPrompt(comment, videoTitle, videoDescription)
+func suggestAnswer(ctx context.Context, isANegativeComment bool, comment string, videoTitle string, videoDescription string, genaiClient *genai.Client) (string, error) {
+
+	var prompt string
+	if isANegativeComment {
+		prompt = getNegativeAnswerPrompt(comment, videoTitle, videoDescription)
+	} else {
+		prompt = getPositiveAnswerPrompt(comment, videoTitle, videoDescription)
+	}
 
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
@@ -79,10 +85,42 @@ func suggestAnswer(ctx context.Context, comment string, videoTitle string, video
 }
 
 // getAnswerPrompt constructs the prompt for the LLM based on the comment and video context.
-func getAnswerPrompt(comment string, videoTitle string, videoDescription string) string {
+func getPositiveAnswerPrompt(comment string, videoTitle string, videoDescription string) string {
 	prompt := fmt.Sprintf(`Você é o meu assistente e responde às mensagens que os inscritos do meu canal no Youtube me enviam. É um canal cristão protestante.
 	Suas respostas precisam estar relacionadas com o contexto, serem amigáveis e respeitosas.
 	Evite adjetivos desnecessários e prefira respostas curtas.
+	O comentário que você deve responder é este: "%s"
+	O título do vídeo onde o comentário foi feito é: "%s"
+	A descrição do vídeo onde o comentário foi feito é: "%s"
+	`, comment, videoTitle, videoDescription)
+	return prompt
+}
+
+// getAnswerPrompt constructs the prompt for the LLM based on the comment and video context.
+func getNegativeAnswerPrompt(comment string, videoTitle string, videoDescription string) string {
+	prompt := fmt.Sprintf(`Você é o meu assistente e responde às mensagens que os inscritos do meu canal no Youtube me enviam. É um canal cristão protestante onde faço estudos bíblicos, tenho o devocional diário (AB7) e também um podcast de entrevistas.
+
+	Você deve analisar o comentário abaixo, classificado como negativo e gerar uma resposta para ele que seja educada e não dê margem para o início de uma discussão.
+
+	Não use adjetivos desnecessários e prefira respostas curtas, de até 15 palavras.
+
+	Exemplos de comentários e respostas:
+
+	Comentário: Esse aí não sabe o que está falando
+	Resposta: Obrigado pelo feedback. Deus abençoe!
+
+	Comentário: Discordo, o sábado precisa ser seguido, não importa o que digam
+	Resposta: Obrigado pela participação e por compartilhar seu ponto de vista. Deus abençoe.
+
+	Comentário: Esse aí é mais um pastor que fica enganando o povo.
+	Resposta: Obrigado pela participação. Deus abençoe.
+
+	Comentário: Falou, falou e não respondeu nada sobre o versículo 7.
+	Resposta: Obrigado pelo feedback. Deus abençoe!
+
+	Comentário: Não vi nada de curiosidade bulen é coisa da sua cabeça invenção dos nutelas
+	Resposta: Obrigado pela participação. Deus abençoe!
+
 	O comentário que você deve responder é este: "%s"
 	O título do vídeo onde o comentário foi feito é: "%s"
 	A descrição do vídeo onde o comentário foi feito é: "%s"

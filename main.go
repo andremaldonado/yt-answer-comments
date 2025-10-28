@@ -111,7 +111,7 @@ func main() {
 			if !isAnsweredByMe {
 				foundUnanswered = true
 
-				isMember := membersMap[comment.Snippet.AuthorChannelId.Value]
+				isMember := membersMap["https://www.youtube.com/channel/"+comment.Snippet.AuthorChannelId.Value] // String adjusted to match full URL, that is how it appears in the CSV
 				authorPrefix := ""
 				if isMember {
 					authorPrefix = "⭐ MEMBRO ⭐ "
@@ -147,35 +147,47 @@ func main() {
 				}
 				fmt.Printf("Análise de sentimento: %s | Nota de entendimento: %d\n", sentiment.Sentimento, sentiment.Nota)
 
-				// Skip very negative comments
-				if sentiment.Sentimento == "negativo" && sentiment.Nota <= 3 {
-					fmt.Println("⚠️ Comentário identificado como negativo e difícil de responder. Pulando para o próximo comentário.")
-					continue // Jump to the next comment
-				}
+				var answer, suggestedAnswer, input string
 
-				// Suggest answer using Gemini
-				fmt.Println("")
-				fmt.Println("Gerando sugestão de resposta...")
-				fmt.Println("")
-				var suggestedAnswer string
-				suggestedAnswer, err = suggestAnswer(ctx, comment.Snippet.TextOriginal, videoTitle, videoDescription, geminiClient)
+				// Only suggest answer if comment is not very negative
+				if sentiment.Sentimento != "negativo" && sentiment.Nota >= 3 {
 
-				if suggestedAnswer == "" || err != nil {
-					fmt.Println("⚠️ Não foi possível gerar uma sugestão de resposta para este comentário.")
-					fmt.Println("🚫 Resposta não publicada. Seguindo para o próximo comentário.")
-					fmt.Println("Error:", err)
+					// Suggest answer using Gemini
 					fmt.Println("")
-					continue // Jump to the next comment
+					fmt.Println("Gerando sugestão de resposta...")
+					fmt.Println("")
+					suggestedAnswer, err = suggestAnswer(ctx, sentiment.Sentimento == "negativo", comment.Snippet.TextOriginal, videoTitle, videoDescription, geminiClient)
+
+					if suggestedAnswer == "" || err != nil {
+						fmt.Println("⚠️ Não foi possível gerar uma sugestão de resposta para este comentário.")
+						fmt.Println("🚫 Resposta não publicada. Seguindo para o próximo comentário.")
+						fmt.Println("Error:", err)
+						fmt.Println("")
+						continue // Jump to the next comment
+					}
+
+					// Show suggested answer and note
+					answer = strings.TrimSpace(suggestedAnswer)
+					fmt.Printf("Sugestão de resposta: %s\n\n", answer)
+
+					// Auto-approve positive comments with high confidence
+					if suggestedAnswer != "" && sentiment.Sentimento == "positivo" && sentiment.Nota >= 4 {
+						input = "S"
+					}
+
+					// If not auto-approved, ask user
+					if input == "" {
+						fmt.Printf("\nDeseja publicar esta resposta? (S/N/E/Q para sair): ")
+						input, _ = reader.ReadString('\n')
+						input = strings.TrimSpace(strings.ToUpper(input))
+					}
 				}
 
-				// Show suggested answer and note
-				answer := strings.TrimSpace(suggestedAnswer)
-				fmt.Printf("Sugestão de resposta: %s\n\n", answer)
-
-				// Check the answer with the user
-				fmt.Printf("\nDeseja publicar esta resposta? (S/N/E/Q para sair): ")
-				input, _ := reader.ReadString('\n')
-				input = strings.TrimSpace(strings.ToUpper(input))
+				// If no suggested answer, force edit
+				if suggestedAnswer == "" {
+					fmt.Println("⚠️ Optei por não gerar uma resposta automática para este comentário.")
+					input = "E"
+				}
 
 				switch input {
 				case "S":
