@@ -1,4 +1,4 @@
-package main
+package youtube
 
 import (
 	"context"
@@ -10,6 +10,13 @@ import (
 
 	"golang.org/x/oauth2"
 	"google.golang.org/api/youtube/v3"
+)
+
+const (
+	// YoutubeForceSslScope is the scope required for SSL access
+	YoutubeForceSslScope = youtube.YoutubeForceSslScope
+	// YoutubeChannelMembershipsCreatorScope is the scope required for channel memberships
+	YoutubeChannelMembershipsCreatorScope = youtube.YoutubeChannelMembershipsCreatorScope
 )
 
 // tokenFromFile reads a token from a file path.
@@ -24,9 +31,9 @@ func tokenFromFile(file string) (*oauth2.Token, error) {
 	return tok, err
 }
 
-// getClient uses a Context and Config to retrieve a Token
+// GetYoutubeClient uses a Context and Config to retrieve a Token
 // then generate a Client. It returns the generated Client.
-func getYoutubeClient(config *oauth2.Config) *http.Client {
+func GetYoutubeClient(config *oauth2.Config) *http.Client {
 	tokFile := "token.json"
 	tok, err := tokenFromFile(tokFile)
 	if err != nil {
@@ -65,11 +72,11 @@ func getYoutubeTokenFromWeb(config *oauth2.Config) *oauth2.Token {
 	return tok
 }
 
-// publishComment to publish a reply to a comment on YouTube.
-func publishComment(service *youtube.Service, parentCommentId, text string) error {
+// PublishComment posts a reply to a YouTube comment
+func PublishComment(service *youtube.Service, parentId string, text string) error {
 	comment := &youtube.Comment{
 		Snippet: &youtube.CommentSnippet{
-			ParentId:     parentCommentId,
+			ParentId:     parentId,
 			TextOriginal: text,
 		},
 	}

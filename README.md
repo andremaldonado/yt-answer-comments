@@ -11,13 +11,26 @@ O programa busca comentários não respondidos do canal autenticado, gera uma su
 - Credenciais OAuth 2.0 (arquivo `client_secret.json`) configuradas na Google Cloud Console para o uso da DataAPI V3 do YouTube
 - Variável de ambiente `GEMINI_API_KEY` com a chave da API usada pelo pacote `google.golang.org/genai`
 
-## Arquivos importantes
+## Estrutura do projeto
 
-- `main.go` - código fonte principal
-- `llm.go`- código fonte relacionado ãs configruações, prompts e chamadas à API da LLM
-- `youtube.go` - código fonte relacionado à configurações e chamadas para a API do Youtube
+```
+cmd/
+  answer-comments/
+    main.go         # ponto de entrada da aplicação
+internal/
+  database/
+    db.go          # gerenciamento de banco de dados SQLite
+  llm/
+    llm.go         # interação com a API do Gemini
+  models/
+    models.go      # estruturas de dados compartilhadas
+  youtube/
+    youtube.go     # interação com a API do YouTube
+```
+
 - `go.mod` / `go.sum` - dependências do projeto
 - `members.csv` - caso queira identificar membros do canal (necessário exportar CSV diretamente do Youtube Studio pois a API de membros necessita de aprovação de um Youtube Partner Manager). Este arquivo é opcional.
+- `comments.db` - banco de dados SQLite para armazenamento de histórico de comentários
 
 ## Configuração do Google API
 
@@ -47,10 +60,10 @@ Na raiz do projeto:
 
 ```bash
 # Instalar dependências e executar diretamente
-go run .
+go run ./cmd/answer-comments
 
 # Ou compilar e executar o binário
-go build -o answer-comments
+go build -o answer-comments ./cmd/answer-comments
 ./answer-comments
 ```
 
@@ -66,23 +79,32 @@ Fluxo de uso:
 - Não compartilhe `client_secret.json` nem `token.json` publicamente.
 - Guarde `GEMINI_API_KEY` em local seguro (variáveis de ambiente, cofre de segredos, etc.).
 
-## Logs e registro (arquivo de log)
+## Banco de dados e histórico
 
-O programa registra alguns eventos e, para cada sugestão de resposta com boa confiança, grava um registro em CSV:
+O programa agora utiliza um banco de dados SQLite (`comments.db`) para armazenar o histórico de comentários e respostas. Isso permite:
 
-- Arquivo: `comment_log.csv` (criado/append no diretório de execução)
-- Formato: campos separados por ponto e vírgula (`;`) com as colunas na ordem:
-	1. Autor (display name)
-	2. Data/hora de publicação do comentário (formato: `02/01/2006 às 15:04`)
-	3. Texto original do comentário
-	4. Nota de entendimento atribuída pelo LLM (inteiro)
-	5. Resposta sugerida pelo LLM
+- Rastreamento completo de todas as interações
+- Análise do histórico de interações com cada usuário
+- Respostas mais contextualizadas baseadas em interações anteriores
+- Melhoria na qualidade das respostas para membros do canal
 
-O código trata `;` (ponto e vírgula) dentro dos campos substituindo por vírgula para evitar quebra do separador. Cada linha é gravada com um timestamp (padrão `log` do Go) e os campos separados por `;`.
+O banco armazena:
+1. ID do comentário do YouTube
+2. Autor do comentário
+3. Texto original
+4. Análise de sentimento
+5. Nota de entendimento (1-5)
+6. Resposta gerada
+7. Se a resposta foi editada pelo usuário
+8. Data/hora do comentário
+9. Data/hora da resposta
+10. ID do vídeo
 
-Observações sobre quando o arquivo é escrito:
-- O registro só é escrito se a `nota` retornada pelo LLM for maior ou igual a 5. Comentários com `nota < 5` são automaticamente pulados (não são logados nem perguntados para publicação).
-- Se houver falha ao abrir/escrever o arquivo `comment_log.csv`, o programa registra um aviso com `log.Printf` (não encerra a execução) e continua.
+O histórico de interações é usado pelo LLM para:
+- Evitar repetir respostas para o mesmo usuário
+- Identificar padrões de comportamento
+- Ajustar o tom das respostas baseado em interações anteriores
+- Dar tratamento diferenciado para membros do canal
 
 ## Troubleshooting
 
@@ -90,6 +112,8 @@ Observações sobre quando o arquivo é escrito:
 - Erro: `A variável de ambiente GEMINI_API_KEY não está configurada.` — exporte a variável antes de executar.
 - Erro ao criar o serviço do YouTube / permissões insuficientes — verifique se a API YouTube Data v3 está habilitada e se as credenciais têm o escopo correto.
 - Se o token não for salvo devido a permissão, verifique as permissões do diretório e execute com um usuário que possa criar arquivos.
+- Erro ao criar/acessar o banco de dados — verifique se o diretório tem permissões de escrita e se o SQLite está instalado no sistema.
+- Se o banco de dados ficar corrompido, exclua o arquivo `comments.db` e execute o programa novamente (um novo banco será criado).
 
 ## Contribuição
 
