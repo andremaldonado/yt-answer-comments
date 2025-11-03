@@ -1,4 +1,4 @@
-package main
+package llm
 
 import (
 	"context"
@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"answer-comments/internal/models"
 
 	"google.golang.org/genai"
 )
@@ -16,14 +18,8 @@ const (
 	GenerationModel = "gemini-2.5-flash"      // more capable model for text generation
 )
 
-// SentimentAnalysis represents the result from the analysis call.
-type SentimentAnalysis struct {
-	Nota       int    `json:"nota"`
-	Sentimento string `json:"sentimento"`
-}
-
-// analyzeComment sends the comment to a smaller/cheaper LLM to get nota and sentimento.
-func analyzeComment(ctx context.Context, comment string, genaiClient *genai.Client) (SentimentAnalysis, error) {
+// AnalyzeComment sends the comment to a smaller/cheaper LLM to get nota and sentimento.
+func AnalyzeComment(ctx context.Context, comment string, genaiClient *genai.Client) (models.SentimentAnalysis, error) {
 	prompt := getAnalysisPrompt(comment)
 
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
@@ -36,7 +32,7 @@ func analyzeComment(ctx context.Context, comment string, genaiClient *genai.Clie
 		nil,
 	)
 	if err != nil {
-		return SentimentAnalysis{}, fmt.Errorf("erro ao analisar comentario com Gemini: %w", err)
+		return models.SentimentAnalysis{}, fmt.Errorf("erro ao analisar comentario com Gemini: %w", err)
 	}
 
 	raw := resp.Text()
@@ -45,21 +41,21 @@ func analyzeComment(ctx context.Context, comment string, genaiClient *genai.Clie
 	cleaned = strings.TrimSuffix(cleaned, "```")
 	cleaned = strings.TrimSpace(cleaned)
 
-	var s SentimentAnalysis
+	var s models.SentimentAnalysis
 	if err := json.Unmarshal([]byte(cleaned), &s); err != nil {
-		return SentimentAnalysis{}, fmt.Errorf("parsing JSON analysis LLM: %w; raw: %s", err, raw)
+		return models.SentimentAnalysis{}, fmt.Errorf("parsing JSON analysis LLM: %w; raw: %s", err, raw)
 	}
 	return s, nil
 }
 
 // suggestAnswer uses the GenerationModel to produce a response text for a given comment.
-func suggestAnswer(ctx context.Context, isANegativeComment bool, comment string, videoTitle string, videoDescription string, genaiClient *genai.Client) (string, error) {
+func SuggestAnswer(ctx context.Context, isANegativeComment bool, comment string, videoTitle string, videoDescription string, authorHistory []models.Comment, isMember bool, genaiClient *genai.Client) (string, error) {
 
 	var prompt string
 	if isANegativeComment {
-		prompt = getNegativeAnswerPrompt(comment, videoTitle, videoDescription)
+		prompt = getNegativeAnswerPrompt(comment, videoTitle, videoDescription, authorHistory, isMember)
 	} else {
-		prompt = getPositiveAnswerPrompt(comment, videoTitle, videoDescription)
+		prompt = getPositiveAnswerPrompt(comment, videoTitle, videoDescription, authorHistory, isMember)
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
@@ -85,7 +81,16 @@ func suggestAnswer(ctx context.Context, isANegativeComment bool, comment string,
 }
 
 // getAnswerPrompt constructs the prompt for the LLM based on the comment and video context.
-func getPositiveAnswerPrompt(comment string, videoTitle string, videoDescription string) string {
+func getPositiveAnswerPrompt(comment string, videoTitle string, videoDescription string, authorHistory []models.Comment, isMember bool) string {
+	var historyContext string
+	if len(authorHistory) > 0 {
+		historyContext = "\nHistórico de interações anteriores com esta pessoa:\n"
+		for i, h := range authorHistory {
+			historyContext += fmt.Sprintf("Comentário anterior %d: %s\nResposta dada: %s\n",
+				i+1, h.CommentText, h.Response)
+		}
+	}
+
 	prompt := fmt.Sprintf(`Você é o meu assistente e responde às mensagens que os inscritos do meu canal no Youtube me enviam. É um canal cristão protestante.
 	Suas respostas precisam estar relacionadas com o contexto, serem amigáveis e respeitosas.
 	Evite adjetivos desnecessários e prefira respostas curtas.
@@ -94,11 +99,33 @@ func getPositiveAnswerPrompt(comment string, videoTitle string, videoDescription
 	O título do vídeo onde o comentário foi feito é: "%s"
 	A descrição do vídeo onde o comentário foi feito é: "%s"
 	`, comment, videoTitle, videoDescription)
+
+	if historyContext != "" {
+		prompt = fmt.Sprintf(`%s
+		O histórico de interações anteriores com esta pessoa é o seguinte:
+		%s
+		Use esse histórico para evitar repetir respostas ou entrar em discussões.
+		Também leve em conta o histórico para ajustar o tom da resposta.
+		`, prompt, historyContext)
+	}
+
+	if isMember {
+		prompt += "\nNote que este usuário é membro do canal, então seja um pouco mais caloroso e agradecido na resposta.\n"
+	}
 	return prompt
 }
 
 // getAnswerPrompt constructs the prompt for the LLM based on the comment and video context.
-func getNegativeAnswerPrompt(comment string, videoTitle string, videoDescription string) string {
+func getNegativeAnswerPrompt(comment string, videoTitle string, videoDescription string, authorHistory []models.Comment, isMember bool) string {
+	var historyContext string
+	if len(authorHistory) > 0 {
+		historyContext = "\nHistórico de interações anteriores com esta pessoa:\n"
+		for i, h := range authorHistory {
+			historyContext += fmt.Sprintf("Comentário anterior %d: %s\nResposta dada: %s\n",
+				i+1, h.CommentText, h.Response)
+		}
+	}
+
 	prompt := fmt.Sprintf(`Você é o meu assistente e responde às mensagens que os inscritos do meu canal no Youtube me enviam. É um canal cristão protestante onde faço estudos bíblicos, tenho o devocional diário (AB7) e também um podcast de entrevistas.
 	Você deve analisar o comentário abaixo, classificado como negativo e gerar uma resposta para ele que seja educada e não dê margem para o início de uma discussão.
 	Não use adjetivos desnecessários e prefira respostas curtas, de até 15 palavras.
@@ -125,6 +152,20 @@ func getNegativeAnswerPrompt(comment string, videoTitle string, videoDescription
 	O título do vídeo onde o comentário foi feito é: "%s"
 	A descrição do vídeo onde o comentário foi feito é: "%s"
 	`, comment, videoTitle, videoDescription)
+
+	if historyContext != "" {
+		prompt = fmt.Sprintf(`%s
+		O histórico de interações anteriores com esta pessoa é o seguinte:
+		%s
+		Use esse histórico para evitar repetir respostas ou entrar em discussões.
+		Também leve em conta o histórico para ajustar o tom da resposta.
+		`, prompt, historyContext)
+	}
+
+	if isMember {
+		prompt += "\nNote que este usuário é membro do canal, considere isso ao dar a resposta.\n"
+	}
+
 	return prompt
 }
 

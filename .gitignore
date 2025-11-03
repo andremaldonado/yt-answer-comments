@@ -22,8 +22,9 @@ token.json
 # members file
 members.csv
 
-# Logs
+# Database and logs
 comment_log.csv
+comments.db*
 
 # Vendor and build directories (if any)
 vendor/
