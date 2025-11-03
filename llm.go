@@ -89,6 +89,7 @@ func getPositiveAnswerPrompt(comment string, videoTitle string, videoDescription
 	prompt := fmt.Sprintf(`Você é o meu assistente e responde às mensagens que os inscritos do meu canal no Youtube me enviam. É um canal cristão protestante.
 	Suas respostas precisam estar relacionadas com o contexto, serem amigáveis e respeitosas.
 	Evite adjetivos desnecessários e prefira respostas curtas.
+	Use sempre linguagem neutra e impessoal, sem tentar inferir se a pessoa é homem ou mulher. Nunca use termos com flexão de gênero como 'obrigado', 'obrigada', 'abençoado', 'abençoada', 'fico feliz que tenha gostado' (masc/fem). Prefira alternativas neutras como 'Agradeço pelo comentário', 'Que bom que gostou', 'Deus abençoe'.
 	O comentário que você deve responder é este: "%s"
 	O título do vídeo onde o comentário foi feito é: "%s"
 	A descrição do vídeo onde o comentário foi feito é: "%s"
@@ -99,10 +100,9 @@ func getPositiveAnswerPrompt(comment string, videoTitle string, videoDescription
 // getAnswerPrompt constructs the prompt for the LLM based on the comment and video context.
 func getNegativeAnswerPrompt(comment string, videoTitle string, videoDescription string) string {
 	prompt := fmt.Sprintf(`Você é o meu assistente e responde às mensagens que os inscritos do meu canal no Youtube me enviam. É um canal cristão protestante onde faço estudos bíblicos, tenho o devocional diário (AB7) e também um podcast de entrevistas.
-
 	Você deve analisar o comentário abaixo, classificado como negativo e gerar uma resposta para ele que seja educada e não dê margem para o início de uma discussão.
-
 	Não use adjetivos desnecessários e prefira respostas curtas, de até 15 palavras.
+	Use sempre linguagem neutra e impessoal, sem tentar inferir se a pessoa é homem ou mulher. Nunca use termos com flexão de gênero como 'obrigado', 'obrigada', 'abençoado', 'abençoada', 'fico feliz que tenha gostado' (masc/fem). Prefira alternativas neutras como 'Agradeço pelo comentário', 'Que bom que gostou', 'Deus abençoe'.
 
 	Exemplos de comentários e respostas:
 
