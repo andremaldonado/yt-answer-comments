@@ -37,7 +37,7 @@ func main() {
 
 	// Flag - Auto-answer mode
 	if *autoAnswerMode {
-		fmt.Println("⚠️ Modo auto-resposta ativado: todas as respostas sugeridas e com alto nível de confiança serão publicadas automaticamente sem confirmação. ⚠️")
+		fmt.Println("⚠️ Modo de auto-resposta ativado: todas as respostas sugeridas e com alto nível de confiança serão publicadas automaticamente sem confirmação. ⚠️")
 	}
 
 	ctx := context.Background()
