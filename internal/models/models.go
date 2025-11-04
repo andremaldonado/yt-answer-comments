@@ -9,6 +9,7 @@ type Comment struct {
 }
 
 type SentimentAnalysis struct {
-	Sentimento string
-	Nota       int
+	Sentimento string `json:"sentimento"`
+	Nota       int    `json:"nota"`
+	Tema       string `json:"tema"`
 }
