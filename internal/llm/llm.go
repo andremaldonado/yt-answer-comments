@@ -49,13 +49,13 @@ func AnalyzeComment(ctx context.Context, comment string, genaiClient *genai.Clie
 }
 
 // suggestAnswer uses the GenerationModel to produce a response text for a given comment.
-func SuggestAnswer(ctx context.Context, isANegativeComment bool, comment string, videoTitle string, videoDescription string, authorHistory []models.Comment, isMember bool, genaiClient *genai.Client) (string, error) {
+func SuggestAnswer(ctx context.Context, isANegativeComment bool, comment string, videoTitle string, videoDescription string, authorHistory []models.Comment, isMember bool, ragContext []string, genaiClient *genai.Client) (string, error) {
 
 	var prompt string
 	if isANegativeComment {
-		prompt = getNegativeAnswerPrompt(comment, videoTitle, videoDescription, authorHistory, isMember)
+		prompt = getNegativeAnswerPrompt(comment, videoTitle, videoDescription, authorHistory, isMember, ragContext)
 	} else {
-		prompt = getPositiveAnswerPrompt(comment, videoTitle, videoDescription, authorHistory, isMember)
+		prompt = getPositiveAnswerPrompt(comment, videoTitle, videoDescription, authorHistory, isMember, ragContext)
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
@@ -81,7 +81,7 @@ func SuggestAnswer(ctx context.Context, isANegativeComment bool, comment string,
 }
 
 // getAnswerPrompt constructs the prompt for the LLM based on the comment and video context.
-func getPositiveAnswerPrompt(comment string, videoTitle string, videoDescription string, authorHistory []models.Comment, isMember bool) string {
+func getPositiveAnswerPrompt(comment string, videoTitle string, videoDescription string, authorHistory []models.Comment, isMember bool, ragContext []string) string {
 	var historyContext string
 	if len(authorHistory) > 0 {
 		historyContext = "\nHistórico de interações anteriores com esta pessoa:\n"
@@ -109,14 +109,26 @@ func getPositiveAnswerPrompt(comment string, videoTitle string, videoDescription
 		`, prompt, historyContext)
 	}
 
+	var consistencyContext string
+	if len(ragContext) > 0 {
+		consistencyContext = "\nINSTRUÇÃO DE CONSISTÊNCIA: No passado, respondi a comentários similares (mesmo tema e sentimento) da seguinte forma:\n"
+		for _, c := range ragContext {
+			consistencyContext += c + "\n"
+		}
+		consistencyContext += "\nUse essas respostas como base de tom e doutrina para gerar a nova resposta para o comentário atual.\n"
+
+		prompt += consistencyContext
+	}
+
 	if isMember {
 		prompt += "\nNote que este usuário é membro do canal, então seja um pouco mais caloroso e agradecido na resposta.\n"
 	}
+
 	return prompt
 }
 
 // getAnswerPrompt constructs the prompt for the LLM based on the comment and video context.
-func getNegativeAnswerPrompt(comment string, videoTitle string, videoDescription string, authorHistory []models.Comment, isMember bool) string {
+func getNegativeAnswerPrompt(comment string, videoTitle string, videoDescription string, authorHistory []models.Comment, isMember bool, ragContext []string) string {
 	var historyContext string
 	if len(authorHistory) > 0 {
 		historyContext = "\nHistórico de interações anteriores com esta pessoa:\n"
@@ -131,23 +143,6 @@ func getNegativeAnswerPrompt(comment string, videoTitle string, videoDescription
 	Não use adjetivos desnecessários e prefira respostas curtas, de até 15 palavras.
 	Use sempre linguagem neutra e impessoal, sem tentar inferir se a pessoa é homem ou mulher. Nunca use termos com flexão de gênero como 'obrigado', 'obrigada', 'abençoado', 'abençoada', 'fico feliz que tenha gostado' (masc/fem). Prefira alternativas neutras como 'Agradeço pelo comentário', 'Que bom que gostou', 'Deus abençoe'.
 
-	Exemplos de comentários e respostas:
-
-	Comentário: Esse aí não sabe o que está falando
-	Resposta: Obrigado pelo feedback. Deus abençoe!
-
-	Comentário: Discordo, o sábado precisa ser seguido, não importa o que digam
-	Resposta: Obrigado pela participação e por compartilhar seu ponto de vista. Deus abençoe.
-
-	Comentário: Esse aí é mais um pastor que fica enganando o povo.
-	Resposta: Obrigado pela participação. Deus abençoe.
-
-	Comentário: Falou, falou e não respondeu nada sobre o versículo 7.
-	Resposta: Obrigado pelo feedback. Deus abençoe!
-
-	Comentário: Não vi nada de curiosidade bulen é coisa da sua cabeça invenção dos nutelas
-	Resposta: Obrigado pela participação. Deus abençoe!
-
 	O comentário que você deve responder é este: "%s"
 	O título do vídeo onde o comentário foi feito é: "%s"
 	A descrição do vídeo onde o comentário foi feito é: "%s"
@@ -160,6 +155,17 @@ func getNegativeAnswerPrompt(comment string, videoTitle string, videoDescription
 		Use esse histórico para evitar repetir respostas ou entrar em discussões.
 		Também leve em conta o histórico para ajustar o tom da resposta.
 		`, prompt, historyContext)
+	}
+
+	var consistencyContext string
+	if len(ragContext) > 0 {
+		consistencyContext = "\nINSTRUÇÃO DE CONSISTÊNCIA: No passado, respondi a comentários similares (mesmo tema e sentimento) da seguinte forma:\n"
+		for _, c := range ragContext {
+			consistencyContext += c + "\n"
+		}
+		consistencyContext += "\nUse essas respostas como base de tom e doutrina para gerar a nova resposta para o comentário atual.\n"
+
+		prompt += consistencyContext
 	}
 
 	if isMember {
@@ -179,8 +185,11 @@ func getAnalysisPrompt(comment string) string {
 	Para o comentário a seguir responda estritamente em JSON com os campos:
 	{
 		"nota": 0, // inteiro 1..5 onde 5 = muito fácil/resposta óbvia
-		"sentimento": "positivo|neutro|negativo" // sentimento geral do comentário
+		"sentimento": "positivo|neutro|negativo", // sentimento geral do comentário
+		"tema": "Tema_do_Comentário" // tema principal do comentário
 	}
+
+	Identifique também o 'tema' principal do comentário. Use um dos seguintes temas pré-definidos para garantir consistência: [Teologia (Dízimo), Teologia (Graça), Teologia (Sábado), Escatologia, Estudo Bíblico (Geral), Devocional (AB7), Podcast (Entrevista), Saudação/Agradecimento, Crítica (Tom), Dúvida (Geral), Pedido de Oração, Outro].
 
 	Exemplo de comentário e resposta esperada:
 
@@ -188,14 +197,16 @@ func getAnalysisPrompt(comment string) string {
 	Resposta: 
 	{
 		"nota": 5,
-		"sentimento": "positivo"
+		"sentimento": "positivo",
+		"tema": "Saudação/Agradecimento"
 	}
 
 	Comentário: "Isso é verdade, Deus é maravilhoso!"
 	Resposta: 
 	{
 		"nota": 5,
-		"sentimento": "positivo"
+		"sentimento": "positivo",
+		"tema": "Saudação/Agradecimento"
 	}
 
 	Comentário: "Por que Deus permite tanto sofrimento no mundo?"
@@ -203,6 +214,7 @@ func getAnalysisPrompt(comment string) string {
 	{
 		"nota": 1,
 		"sentimento": "neutro"
+		"tema": "Dúvida (Geral)"
 	}
 
 	Comentário: "Você não entende nada sobre a Bíblia."
@@ -210,6 +222,7 @@ func getAnalysisPrompt(comment string) string {
 	{
 		"nota": 3,
 		"sentimento": "negativo"
+		"tema": "Crítica (Tom)"
 	}
 
 	Comentário: "Falou besteira."
@@ -217,6 +230,7 @@ func getAnalysisPrompt(comment string) string {
 	{
 		"nota": 4,
 		"sentimento": "negativo"
+		"tema": "Crítica (Tom)"
 	}
 
 	Comentário que deve ser analisado: "%s"

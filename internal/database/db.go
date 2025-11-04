@@ -33,7 +33,7 @@ func InitDB() error {
 		return err
 	}
 
-	// Create comments table
+	// Create comments table if it doesn't exist
 	_, err = db.Exec(`
 		CREATE TABLE IF NOT EXISTS comments (
 			id TEXT PRIMARY KEY,
@@ -42,6 +42,7 @@ func InitDB() error {
 			sentiment TEXT NOT NULL,
 			score INTEGER NOT NULL,
 			response TEXT,
+			theme TEXT,
 			user_answered BOOLEAN NOT NULL DEFAULT 0,
 			created_at DATETIME NOT NULL,
 			responded_at DATETIME,
@@ -52,11 +53,29 @@ func InitDB() error {
 		return err
 	}
 
+	// Add theme column if it doesn't exist
+	_, err = db.Exec(`
+		SELECT theme FROM comments LIMIT 1
+	`)
+	if err != nil {
+		// If the error indicates that the column doesn't exist, add it
+		if err.Error() == "no such column: theme" {
+			_, err = db.Exec(`
+				ALTER TABLE comments ADD COLUMN theme TEXT
+			`)
+			if err != nil {
+				return err
+			}
+		} else {
+			return err
+		}
+	}
+
 	return nil
 }
 
 // SaveComment stores a comment and its response in the database
-func SaveComment(comment *youtube.Comment, sentiment string, score int, response string, userAnswered bool) error {
+func SaveComment(comment *youtube.Comment, sentiment string, score int, theme string, response string, userAnswered bool) error {
 	createdAt, err := time.Parse(time.RFC3339, comment.Snippet.PublishedAt)
 	if err != nil {
 		return err
@@ -64,15 +83,16 @@ func SaveComment(comment *youtube.Comment, sentiment string, score int, response
 
 	_, err = db.Exec(`
 		INSERT INTO comments (
-			id, author, comment_text, sentiment, score, response, 
+			id, author, comment_text, sentiment, score, response, theme,
 			user_answered, created_at, responded_at, video_id
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		comment.Id,
 		comment.Snippet.AuthorDisplayName,
 		comment.Snippet.TextOriginal,
 		sentiment,
 		score,
 		response,
+		theme,
 		userAnswered,
 		createdAt,
 		time.Now(),
@@ -122,4 +142,39 @@ func CloseDB() {
 	if db != nil {
 		db.Close()
 	}
+}
+
+// GetPreviousAnswersByContext retrieves previous answers with similar theme and sentiment
+func GetPreviousAnswersByContext(theme string, sentiment string, limit int) ([]string, error) {
+	rows, err := db.Query(`
+		SELECT comment_text, response
+		FROM comments
+		WHERE theme = ? 
+		AND sentiment = ?
+		AND response != ''
+		AND user_answered = 1
+		ORDER BY responded_at DESC
+		LIMIT ?
+	`, theme, sentiment, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []string
+	for rows.Next() {
+		var comment, response string
+		if err := rows.Scan(&comment, &response); err != nil {
+			return nil, err
+		}
+		// Format the result as "Pergunta: {comment}\nResposta: {response}\n"
+		contextEntry := "Pergunta: " + comment + "\nResposta: " + response + "\n"
+		results = append(results, contextEntry)
+	}
+
+	if err = rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return results, nil
 }

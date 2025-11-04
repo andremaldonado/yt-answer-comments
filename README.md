@@ -87,6 +87,7 @@ O programa agora utiliza um banco de dados SQLite (`comments.db`) para armazenar
 - Análise do histórico de interações com cada usuário
 - Respostas mais contextualizadas baseadas em interações anteriores
 - Melhoria na qualidade das respostas para membros do canal
+- Construção de dataset para sistema RAG com categorização por temas
 
 O banco armazena:
 1. ID do comentário do YouTube
@@ -94,11 +95,22 @@ O banco armazena:
 3. Texto original
 4. Análise de sentimento
 5. Nota de entendimento (1-5)
-6. Resposta gerada
-7. Se a resposta foi editada pelo usuário
-8. Data/hora do comentário
-9. Data/hora da resposta
-10. ID do vídeo
+6. Tema do comentário
+7. Resposta gerada
+8. Se a resposta foi editada pelo usuário
+9. Data/hora do comentário
+10. Data/hora da resposta
+11. ID do vídeo
+
+### Temas de Categorização
+
+Os comentários são automaticamente categorizados em temas. Os temas são configurados diretamente no prompt para a LLM.
+
+Esta categorização é usada para:
+- Construir um dataset estruturado para um sistema RAG
+- Garantir consistência doutrinária nas respostas
+- Analisar padrões de engajamento por tema
+- Identificar tópicos que precisam de mais conteúdo ou esclarecimento
 
 O histórico de interações é usado pelo LLM para:
 - Evitar repetir respostas para o mesmo usuário
