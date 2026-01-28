@@ -1,5 +1,5 @@
 # Binaries
-./answer-comments
+answer-comments
 *.exe
 *.dll
 *.so

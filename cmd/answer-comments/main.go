@@ -23,77 +23,125 @@ import (
 )
 
 func main() {
+	// Customize flag usage message
+	flag.Usage = func() {
+		fmt.Fprintf(os.Stderr, "YouTube Answer Comments - Assistente inteligente para responder comentários\n\n")
+		fmt.Fprintf(os.Stderr, "Esta ferramenta monitora comentários não respondidos no seu canal do YouTube\n")
+		fmt.Fprintf(os.Stderr, "e sugere respostas usando IA (Gemini), considerando o contexto do vídeo,\n")
+		fmt.Fprintf(os.Stderr, "histórico de interações e respostas anteriores similares.\n\n")
+		fmt.Fprintf(os.Stderr, "USO:\n")
+		fmt.Fprintf(os.Stderr, "  answer-comments [opções]\n\n")
+		fmt.Fprintf(os.Stderr, "OPÇÕES:\n")
+		flag.PrintDefaults()
+		fmt.Fprintf(os.Stderr, "\nREQUISITOS:\n")
+		fmt.Fprintf(os.Stderr, "  - client_secret.json: Credenciais OAuth2 do YouTube API\n")
+		fmt.Fprintf(os.Stderr, "  - GEMINI_API_KEY: Variável de ambiente com a chave da API Gemini\n")
+		fmt.Fprintf(os.Stderr, "  - members.csv (opcional): Lista de membros do canal\n\n")
+		fmt.Fprintf(os.Stderr, "EXEMPLOS:\n")
+		fmt.Fprintf(os.Stderr, "  answer-comments              # Modo padrão com sugestões da IA\n")
+		fmt.Fprintf(os.Stderr, "  answer-comments -m           # Modo manual (sem sugestões)\n")
+		fmt.Fprintf(os.Stderr, "  answer-comments -a           # Modo automático (publica sem confirmação)\n")
+		fmt.Fprintf(os.Stderr, "  answer-comments -t           # Usa transcrição dos vídeos como contexto\n")
+		fmt.Fprintf(os.Stderr, "  answer-comments -a -t        # Combina modo automático com transcrição\n\n")
+	}
+
 	// Parse command line flags
 	manualMode := flag.Bool("manual", false, "Modo manual: pula a sugestão da LLM e força edição manual de todas as respostas")
 	flag.BoolVar(manualMode, "m", false, "Atalho para --manual")
 	autoAnswerMode := flag.Bool("auto", false, "Modo auto-resposta: todas as respostas sugeridas e com alto nível de confiança pela LLM serão publicadas automaticamente sem confirmação")
 	flag.BoolVar(autoAnswerMode, "a", false, "Atalho para --auto")
+	transcriptionMode := flag.Bool("transcription", false, "Modo transcrição: usa a transcrição automática do vídeo como contexto para a LLM (exceto para comentários de Saudação/Agradecimento)")
+	flag.BoolVar(transcriptionMode, "t", false, "Atalho para --transcription")
 	flag.Parse()
+
+	// Clear the terminal screen (works on most terminals)
+	fmt.Print("\033[H\033[2J")
 
 	// Flag - Manual mode
 	if *manualMode {
-		fmt.Println("⚠️ Modo manual ativado: todas as respostas deverão ser editadas manualmente. ⚠️")
+		fmt.Print("⚠️ Modo manual ativado ⚠️ \nTodas as respostas deverão ser editadas manualmente.\n\n")
 	}
 
 	// Flag - Auto-answer mode
 	if *autoAnswerMode {
-		fmt.Println("⚠️ Modo de auto-resposta ativado: todas as respostas sugeridas e com alto nível de confiança serão publicadas automaticamente sem confirmação. ⚠️")
+		fmt.Print("⚠️ Modo de auto-resposta ativado ⚠️ \nTodas as respostas sugeridas e com alto nível de confiança serão publicadas automaticamente sem confirmação.\n\n")
+	}
+
+	// Flag - Transcription mode
+	if *transcriptionMode {
+		fmt.Print("⚠️ Modo de transcrição ativado ⚠️ \nA transcrição automática dos vídeos será usada como contexto para a LLM (exceto para comentários de Saudação/Agradecimento).\n\n")
 	}
 
 	ctx := context.Background()
 
 	// Initialize database
 	if err := database.InitDB(); err != nil {
-		log.Fatalf("Erro ao inicializar o banco de dados: %v", err)
+		log.Printf("Erro ao inicializar o banco de dados: %v", err)
+		os.Exit(1)
 	}
 	defer database.CloseDB()
 
 	b, err := os.ReadFile("client_secret.json")
 	if err != nil {
-		log.Fatalf("Não foi possível ler o arquivo client_secret.json: %v", err)
+		log.Printf("Não foi possível ler o arquivo client_secret.json: %v", err)
+		os.Exit(1)
 	}
 
 	// Load OAuth2 config for YouTube
-	config, err := google.ConfigFromJSON(b, yt.YoutubeForceSslScope, yt.YoutubeChannelMembershipsCreatorScope)
-	if err != nil {
-		log.Fatalf("Não foi possível analisar o arquivo de segredo do cliente: %v", err)
+	scopes := []string{yt.YoutubeForceSslScope, yt.YoutubeChannelMembershipsCreatorScope}
+	if *transcriptionMode {
+		scopes = append(scopes, youtube.YoutubeScope) // Adiciona scope para acessar captions
 	}
-	client := yt.GetYoutubeClient(config)
+	config, err := google.ConfigFromJSON(b, scopes...)
+	if err != nil {
+		log.Printf("Não foi possível analisar o arquivo de segredo do cliente: %v", err)
+		os.Exit(1)
+	}
+	client, err := yt.GetYoutubeClient(config)
+	if err != nil {
+		log.Printf("Erro ao obter cliente do YouTube: %v", err)
+		os.Exit(1)
+	}
 
 	service, err := youtube.NewService(ctx, option.WithHTTPClient(client))
 	if err != nil {
-		log.Fatalf("Erro ao criar o serviço do YouTube: %v", err)
+		log.Printf("Erro ao criar o serviço do YouTube: %v", err)
+		os.Exit(1)
 	}
 
 	// Get the authenticated user's channel ID
 	channelResponse, err := service.Channels.List([]string{"id"}).Mine(true).Do()
 	if err != nil {
-		log.Fatalf("Erro ao obter o ID do canal: %v", err)
+		log.Printf("Erro ao obter o ID do canal: %v", err)
+		os.Exit(1)
 	}
 	if len(channelResponse.Items) == 0 {
-		log.Fatalf("Não foi possível encontrar o ID do canal do usuário autenticado.")
+		log.Printf("Não foi possível encontrar o ID do canal do usuário autenticado.")
+		os.Exit(1)
 	}
 	myChannelId := channelResponse.Items[0].Id
-	fmt.Printf("Autenticado com sucesso! ID do seu canal: %s\n\n", myChannelId)
+	fmt.Printf("✅ Autenticado com sucesso! ID do seu canal: %s\n\n", myChannelId)
 
 	// load members from CSV
 	membersMap, err := loadMembersFromCSV("members.csv")
 	if err != nil {
-		log.Fatalf("Não foi possível carregar a lista de membros: %v", err)
+		log.Printf("Não foi possível carregar a lista de membros: %v", err)
 	}
-	fmt.Printf("Carregados %d membros a partir do arquivo.\n", len(membersMap))
+	fmt.Printf("✅ Carregados %d membros a partir do arquivo.\n\n", len(membersMap))
 
 	// Initialize Gemini client
 	geminiAPIKey := os.Getenv("GEMINI_API_KEY")
 	if geminiAPIKey == "" {
-		log.Fatal("A variável de ambiente GEMINI_API_KEY não está configurada.")
+		log.Printf("A variável de ambiente GEMINI_API_KEY não está configurada.")
+		os.Exit(1)
 	}
 	geminiClient, err := genai.NewClient(ctx, &genai.ClientConfig{
 		APIKey:  geminiAPIKey,
 		Backend: genai.BackendGeminiAPI,
 	})
 	if err != nil {
-		log.Fatal(err)
+		log.Printf("Erro ao criar cliente Gemini: %v", err)
+		os.Exit(1)
 	}
 
 	// Prepare to read user input
@@ -101,7 +149,7 @@ func main() {
 	var pageToken string
 
 	// Ask for user confirmation before starting
-	fmt.Print("Pressione Enter para iniciar a verificação de novos comentários não respondidos...")
+	fmt.Print("-> Pressione Enter para iniciar a verificação de novos comentários não respondidos...")
 	_, _ = reader.ReadString('\n')
 
 	// Infinite loop to continuously check for new comments
@@ -119,7 +167,8 @@ func main() {
 
 		response, err := call.Do()
 		if err != nil {
-			log.Fatalf("Erro ao buscar os comentários: %v", err)
+			log.Printf("Erro ao buscar os comentários: %v", err)
+			return
 		}
 
 		pageToken = response.NextPageToken // Token update for next iteration
@@ -199,47 +248,60 @@ func main() {
 				// Buscar exemplos anteriores para RAG
 				pastAnswers, err := database.GetPreviousAnswersByContext(sentiment.Tema, sentiment.Sentimento, 5)
 				if err != nil {
-					log.Printf("Erro ao buscar histórico de RAG: %v", err)
-					// Não pare a execução, apenas continue sem o contexto
+					log.Printf("⚠️ Erro ao buscar histórico de RAG: %v", err)
+					pastAnswers = nil
+				}
+
+				// Buscar histórico do autor
+				authorHistory, err := database.GetLastComments(comment.Snippet.AuthorDisplayName, 10)
+				if err != nil {
+					log.Printf("⚠️ Erro ao buscar histórico de comentários: %v", err)
+					authorHistory = nil
 				}
 
 				shouldSuggestAnswer := !*manualMode && sentiment.Sentimento != "negativo" && sentiment.Nota >= 3
 				if shouldSuggestAnswer {
-					// Search comment history from this author
-					authorHistory, err := database.GetLastComments(comment.Snippet.AuthorDisplayName, 3)
-					if err != nil {
-						log.Printf("⚠️ Erro ao buscar histórico de comentários: %v", err)
-						authorHistory = nil // continues without history
+
+					// Get video transcription if flag is set
+					var videoTranscript string
+					if *transcriptionMode && sentiment.Tema != "Saudação/Agradecimento" {
+						fmt.Println("# Transcrição do vídeo")
+						fmt.Printf("Buscando transcrição do vídeo...\n")
+						videoTranscript, err = yt.GetVideoTranscription(ctx, service, comment.Snippet.VideoId)
+						if err != nil {
+							log.Printf("⚠️ Não foi possível obter a transcrição: %v", err)
+							fmt.Println("⚠️ Transcrição não disponível, continuando sem ela.")
+						} else {
+							fmt.Printf("✅ Transcrição obtida com sucesso (%d caracteres)\n\n", len(videoTranscript))
+						}
 					}
+
+					fmt.Println("# RAG")
 
 					// If there is history, show to user
 					if len(authorHistory) > 0 {
-						fmt.Println("# RAG")
-						fmt.Println("Histórico de interações anteriores com esta pessoa:")
-						for i, h := range authorHistory {
-							fmt.Printf("\nComentário anterior %d (%s):\n%s\n", i+1, h.CreatedAt.Format("02/01/2006"), h.CommentText)
-							if h.Response != "" {
-								fmt.Printf("Resposta dada: %s\n", h.Response)
-							}
-						}
-						fmt.Println("")
+						fmt.Printf("✅ %d mensagens encontradas no histórico de interações anteriores com esta pessoa.\n", len(authorHistory))
+					}
+
+					// If there is similar previous answers, show to user
+					if len(pastAnswers) > 0 {
+						fmt.Printf("✅ %d respostas similares encontradas no histórico.\n", len(pastAnswers))
 					}
 
 					// Suggest answer using Gemini
-					fmt.Println("# Sugestão de resposta")
-					suggestedAnswer, err = llm.SuggestAnswer(ctx, sentiment.Sentimento == "negativo", comment.Snippet.TextOriginal, videoTitle, videoDescription, authorHistory, isMember, pastAnswers, geminiClient)
+					fmt.Println("\n# Sugestão de resposta")
+					suggestedAnswer, err = llm.SuggestAnswer(ctx, sentiment.Sentimento == "negativo", comment.Snippet.TextOriginal, videoTitle, videoDescription, videoTranscript, authorHistory, isMember, pastAnswers, geminiClient)
 
 					if suggestedAnswer == "" || err != nil {
-						fmt.Println("⚠️ Não foi possível gerar uma sugestão de resposta para este comentário.")
-						fmt.Println("🚫 Resposta não publicada. Seguindo para o próximo comentário.")
+						fmt.Println("⚠️ Não foi possível gerar uma sugestão de resposta para este comentário. Seguindo para o próximo comentário.")
 						fmt.Println("Error:", err)
 						fmt.Println("")
-						continue // Jump to the next comment
+						continue
 					}
 
 					// Show suggested answer and note
 					answer = strings.TrimSpace(suggestedAnswer)
-					fmt.Printf("%s\n\n", answer)
+					fmt.Printf("%s\n", answer)
 
 					// Auto-approve positive comments with high confidence
 					if suggestedAnswer != "" && sentiment.Sentimento == "positivo" && sentiment.Nota >= 4 && *autoAnswerMode {
