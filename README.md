@@ -60,10 +60,10 @@ Na raiz do projeto:
 
 ```bash
 # Instalar dependências e executar diretamente
-go run ./cmd/answer-comments
+go run ./cmd/answer-comments/main.go
 
 # Ou compilar e executar o binário
-go build -o answer-comments ./cmd/answer-comments
+go build -o answer-comments ./cmd/answer-comments/main.go
 ./answer-comments
 ```
 
