@@ -162,7 +162,7 @@ func getNegativeAnswerPrompt(comment string, videoTitle string, videoDescription
 		prompt = fmt.Sprintf(`%s
 		O histórico de interações anteriores com esta pessoa é o seguinte:
 		%s
-		Use esse histórico para evitar repetir respostas, gerar mais proximidade com a pessoa e também para ajustar o tom da resposta. Se for uma pessoa que comenta frequentemente de forma positiva, tente ser mais caloroso.
+		Use esse histórico principalmente para evitar repetir respostas e para manter consistência no tom das respostas. Quando perceber que há vários comentários anteriores de tom positivo feitos pela mesma pessoa, você pode, mantendo sempre a linguagem neutra e impessoal e sem usar flexões de gênero, (1) reconhecer que ela já comenta com frequência, (2) agradecer de forma um pouco mais explícita e (3) adotar um tom ligeiramente mais acolhedor, sempre com poucas frases e sem exageros.
 		`, prompt, historyContext)
 	}
 
