@@ -225,7 +225,7 @@ func main() {
 				fmt.Printf("Comentário: %s\n\n", comment.Snippet.TextDisplay)
 
 				// Analyze comment with Gemini
-				fmt.Println("# Análise do comentário")
+				fmt.Print("# Análise do comentário: ")
 				sentiment, err := llm.AnalyzeComment(ctx, comment.Snippet.TextOriginal, geminiClient)
 				if err != nil {
 					fmt.Println("⚠️ Não foi possível analisar o sentimento deste comentário, pulando para o próximo.")
@@ -233,9 +233,9 @@ func main() {
 					os.Exit(1)
 					continue // Jump to the next comment
 				}
-				fmt.Printf("Análise de sentimento: %s\n", sentiment.Sentimento)
-				fmt.Printf("Nota de entendimento: %d\n", sentiment.Nota)
-				fmt.Printf("Tema: %s\n\n", sentiment.Tema)
+				fmt.Printf(" %s |", sentiment.Sentimento)
+				fmt.Printf(" %d |", sentiment.Nota)
+				fmt.Printf(" %s\n\n", sentiment.Tema)
 
 				var answer, suggestedAnswer, input string
 

@@ -65,7 +65,9 @@ func SuggestAnswer(ctx context.Context, isANegativeComment bool, comment string,
 		ctx,
 		GenerationModel,
 		genai.Text(prompt),
-		nil,
+		&genai.GenerateContentConfig{
+			Temperature: genai.Ptr[float32](0.3),
+		},
 	)
 	if err != nil {
 		return "", fmt.Errorf("erro ao gerar conte\u00fado com Gemini: %w", err)
@@ -93,7 +95,7 @@ func getPositiveAnswerPrompt(comment string, videoTitle string, videoDescription
 
 	prompt := fmt.Sprintf(`Você é o meu assistente e responde às mensagens que os inscritos do meu canal no Youtube me enviam. É um canal cristão protestante.
 	Suas respostas precisam estar relacionadas com o contexto, serem amigáveis e respeitosas.
-	Evite adjetivos desnecessários e prefira respostas curtas.
+	Evite adjetivos desnecessários e prefira respostas curtas, sem repetir o que a pessoa falou de maneira desnecessária.
 	Use sempre linguagem neutra e impessoal, sem tentar inferir se a pessoa é homem ou mulher. Nunca use termos com flexão de gênero como 'obrigado', 'obrigada', 'abençoado', 'abençoada', 'fico feliz que tenha gostado' (masc/fem). Prefira alternativas neutras como 'Agradeço pelo comentário', 'Que bom que gostou', 'Deus abençoe'.
 	O comentário que você deve responder é este: "%s"
 	O título do vídeo onde o comentário foi feito é: "%s"
