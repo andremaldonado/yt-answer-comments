@@ -15,6 +15,8 @@ import (
 	"answer-comments/internal/llm"
 	yt "answer-comments/internal/youtube"
 
+	"github.com/gdamore/tcell/v2"
+	"github.com/rivo/tview"
 	"golang.org/x/oauth2/google"
 	"google.golang.org/api/option"
 	"google.golang.org/api/youtube/v3"
@@ -54,95 +56,25 @@ func main() {
 	flag.BoolVar(transcriptionMode, "t", false, "Atalho para --transcription")
 	flag.Parse()
 
-	// Clear the terminal screen (works on most terminals)
-	fmt.Print("\033[H\033[2J")
-
-	// Flag - Manual mode
-	if *manualMode {
-		fmt.Print("⚠️ Modo manual ativado ⚠️ \nTodas as respostas deverão ser editadas manualmente.\n\n")
-	}
-
-	// Flag - Auto-answer mode
-	if *autoAnswerMode {
-		fmt.Print("⚠️ Modo de auto-resposta ativado ⚠️ \nTodas as respostas sugeridas e com alto nível de confiança serão publicadas automaticamente sem confirmação.\n\n")
-	}
-
-	// Flag - Transcription mode
-	if *transcriptionMode {
-		fmt.Print("⚠️ Modo de transcrição ativado ⚠️ \nA transcrição automática dos vídeos será usada como contexto para a LLM (exceto para comentários de Saudação/Agradecimento).\n\n")
-	}
-
 	ctx := context.Background()
-
-	// Initialize database
-	if err := database.InitDB(); err != nil {
-		log.Printf("Erro ao inicializar o banco de dados: %v", err)
+	setup, exitSetup, err := runPreparationScreen(ctx, *manualMode, *autoAnswerMode, *transcriptionMode)
+	if err != nil {
+		log.Printf("Erro durante a preparação: %v", err)
 		os.Exit(1)
+	}
+	if exitSetup {
+		fmt.Println("Encerrando a aplicação.")
+		return
 	}
 	defer database.CloseDB()
 
-	b, err := os.ReadFile("client_secret.json")
-	if err != nil {
-		log.Printf("Não foi possível ler o arquivo client_secret.json: %v", err)
-		os.Exit(1)
-	}
+	service := setup.youtubeService
+	myChannelId := setup.channelID
+	membersMap := setup.members
+	geminiClient := setup.geminiClient
 
-	// Load OAuth2 config for YouTube
-	scopes := []string{yt.YoutubeForceSslScope, yt.YoutubeChannelMembershipsCreatorScope}
-	if *transcriptionMode {
-		scopes = append(scopes, youtube.YoutubeScope) // Adiciona scope para acessar captions
-	}
-	config, err := google.ConfigFromJSON(b, scopes...)
-	if err != nil {
-		log.Printf("Não foi possível analisar o arquivo de segredo do cliente: %v", err)
-		os.Exit(1)
-	}
-	client, err := yt.GetYoutubeClient(config)
-	if err != nil {
-		log.Printf("Erro ao obter cliente do YouTube: %v", err)
-		os.Exit(1)
-	}
-
-	service, err := youtube.NewService(ctx, option.WithHTTPClient(client))
-	if err != nil {
-		log.Printf("Erro ao criar o serviço do YouTube: %v", err)
-		os.Exit(1)
-	}
-
-	// Get the authenticated user's channel ID
-	channelResponse, err := service.Channels.List([]string{"id"}).Mine(true).Do()
-	if err != nil {
-		log.Printf("Erro ao obter o ID do canal: %v", err)
-		os.Exit(1)
-	}
-	if len(channelResponse.Items) == 0 {
-		log.Printf("Não foi possível encontrar o ID do canal do usuário autenticado.")
-		os.Exit(1)
-	}
-	myChannelId := channelResponse.Items[0].Id
-	fmt.Printf("✅ Autenticado com sucesso! ID do seu canal: %s\n\n", myChannelId)
-
-	// load members from CSV
-	membersMap, err := loadMembersFromCSV("members.csv")
-	if err != nil {
-		log.Printf("Não foi possível carregar a lista de membros: %v", err)
-	}
-	fmt.Printf("✅ Carregados %d membros a partir do arquivo.\n\n", len(membersMap))
-
-	// Initialize Gemini client
-	geminiAPIKey := os.Getenv("GEMINI_API_KEY")
-	if geminiAPIKey == "" {
-		log.Printf("A variável de ambiente GEMINI_API_KEY não está configurada.")
-		os.Exit(1)
-	}
-	geminiClient, err := genai.NewClient(ctx, &genai.ClientConfig{
-		APIKey:  geminiAPIKey,
-		Backend: genai.BackendGeminiAPI,
-	})
-	if err != nil {
-		log.Printf("Erro ao criar cliente Gemini: %v", err)
-		os.Exit(1)
-	}
+	// Clear the terminal screen (works on most terminals)
+	fmt.Print("\033[H\033[2J")
 
 	// Prepare to read user input
 	reader := bufio.NewReader(os.Stdin)
@@ -391,6 +323,227 @@ func main() {
 			}
 		}
 	}
+}
+
+type setupResult struct {
+	youtubeService *youtube.Service
+	channelID      string
+	members        map[string]bool
+	geminiClient   *genai.Client
+}
+
+func runPreparationScreen(ctx context.Context, manualMode, autoMode, useTranscription bool) (*setupResult, bool, error) {
+	setupCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	app := tview.NewApplication()
+	statusView := tview.NewTextView().
+		SetDynamicColors(true).
+		SetWrap(true)
+	fmt.Fprintf(statusView, "[yellow]Preparando ambiente...[-]\n\n")
+
+	startButton := tview.NewButton("Carregando...")
+	exitButton := tview.NewButton("Sair")
+	var ready bool
+	var quit bool
+	var setupErr error
+	var result *setupResult
+
+	startButton.SetSelectedFunc(func() {
+		if !ready {
+			return
+		}
+		app.Stop()
+	})
+	exitButton.SetSelectedFunc(func() {
+		quit = true
+		cancel()
+		app.Stop()
+	})
+
+	buttonRow := tview.NewFlex().
+		AddItem(startButton, 0, 1, true).
+		AddItem(exitButton, 0, 1, false)
+	focusables := []tview.Primitive{startButton, exitButton}
+	currentFocus := 0
+	updateFocus := func(next int) {
+		if next < 0 {
+			next = len(focusables) - 1
+		} else if next >= len(focusables) {
+			next = 0
+		}
+		currentFocus = next
+		app.SetFocus(focusables[currentFocus])
+	}
+	layout := tview.NewFlex().
+		SetDirection(tview.FlexRow).
+		AddItem(statusView, 0, 1, false).
+		AddItem(buttonRow, 3, 0, true)
+	layout.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		switch event.Key() {
+		case tcell.KeyTab:
+			updateFocus(currentFocus + 1)
+			return nil
+		case tcell.KeyBacktab:
+			updateFocus(currentFocus - 1)
+			return nil
+		case tcell.KeyRight:
+			updateFocus(currentFocus + 1)
+			return nil
+		case tcell.KeyLeft:
+			updateFocus(currentFocus - 1)
+			return nil
+		}
+		return event
+	})
+
+	logStep := func(msg string) {
+		app.QueueUpdateDraw(func() {
+			fmt.Fprintf(statusView, "%s\n", msg)
+		})
+	}
+
+	go func() {
+		res, err := performSetup(setupCtx, useTranscription, logStep)
+		if err != nil {
+			setupErr = err
+			app.QueueUpdateDraw(func() {
+				fmt.Fprintf(statusView, "[red]Erro: %v[-]\nUse 'Sair' para encerrar.\n", err)
+				startButton.SetLabel("Indisponível")
+			})
+			return
+		}
+		result = res
+		app.QueueUpdateDraw(func() {
+			ready = true
+			startButton.SetLabel("Iniciar")
+			fmt.Fprintf(statusView, "\n[green]Dependências carregadas![-]\nPressione 'Iniciar' para continuar ou 'Sair' para fechar.\n")
+			fmt.Fprintf(statusView, "\n[blue]Resumo do ambiente[-]\n")
+			fmt.Fprintf(statusView, "• Canal autenticado: %s\n", result.channelID)
+			fmt.Fprintf(statusView, "• Membros carregados: %d\n", len(result.members))
+			fmt.Fprintf(statusView, "\n[blue]Modo de execução[-]\n")
+			if manualMode {
+				fmt.Fprintf(statusView, "⚠️ Modo manual ativado: todas as respostas serão editadas manualmente.\n")
+			} else {
+				fmt.Fprintf(statusView, "✅ Modo assistido: respostas serão sugeridas pela IA.\n")
+			}
+			if autoMode {
+				fmt.Fprintf(statusView, "⚠️ Auto-resposta ligada: respostas positivas com alta confiança serão publicadas automaticamente.\n")
+			} else {
+				fmt.Fprintf(statusView, "✅ Publicação manual: cada resposta será confirmada antes de enviar.\n")
+			}
+			if useTranscription {
+				fmt.Fprintf(statusView, "✅ Transcrição ativa: contexto dos vídeos será usado quando aplicável.\n")
+			} else {
+				fmt.Fprintf(statusView, "ℹ️ Transcrição desativada: apenas título e descrição do vídeo serão considerados.\n")
+			}
+		})
+	}()
+
+	if err := app.SetRoot(layout, true).SetFocus(startButton).Run(); err != nil {
+		return nil, false, err
+	}
+
+	if quit {
+		return nil, true, nil
+	}
+	if setupErr != nil {
+		return nil, false, setupErr
+	}
+	return result, false, nil
+}
+
+func performSetup(ctx context.Context, useTranscription bool, logStep func(string)) (*setupResult, error) {
+	if logStep == nil {
+		logStep = func(string) {}
+	}
+	logStep("Inicializando banco de dados...")
+	if err := database.InitDB(); err != nil {
+		return nil, err
+	}
+	cleanupOnError := func() {
+		database.CloseDB()
+	}
+	logStep("Banco de dados pronto.")
+
+	logStep("Lendo credenciais OAuth...")
+	creds, err := os.ReadFile("client_secret.json")
+	if err != nil {
+		cleanupOnError()
+		return nil, err
+	}
+	logStep("Credenciais carregadas.")
+
+	scopes := []string{yt.YoutubeForceSslScope, yt.YoutubeChannelMembershipsCreatorScope}
+	if useTranscription {
+		scopes = append(scopes, youtube.YoutubeScope)
+	}
+	logStep("Configurando OAuth...")
+	config, err := google.ConfigFromJSON(creds, scopes...)
+	if err != nil {
+		cleanupOnError()
+		return nil, err
+	}
+
+	logStep("Obtendo cliente autenticado do YouTube...")
+	client, err := yt.GetYoutubeClient(config)
+	if err != nil {
+		cleanupOnError()
+		return nil, err
+	}
+
+	logStep("Criando serviço do YouTube...")
+	service, err := youtube.NewService(ctx, option.WithHTTPClient(client))
+	if err != nil {
+		cleanupOnError()
+		return nil, err
+	}
+
+	logStep("Validando canal autenticado...")
+	channelResponse, err := service.Channels.List([]string{"id"}).Mine(true).Do()
+	if err != nil {
+		cleanupOnError()
+		return nil, err
+	}
+	if len(channelResponse.Items) == 0 {
+		cleanupOnError()
+		return nil, fmt.Errorf("não foi possível encontrar o ID do canal do usuário autenticado")
+	}
+	channelID := channelResponse.Items[0].Id
+	logStep(fmt.Sprintf("Canal autenticado: %s", channelID))
+
+	logStep("Carregando lista de membros...")
+	membersMap, err := loadMembersFromCSV("members.csv")
+	if err != nil {
+		logStep(fmt.Sprintf("[yellow]Aviso: não foi possível carregar members.csv: %v[-]", err))
+		membersMap = make(map[string]bool)
+	} else {
+		logStep(fmt.Sprintf("%d membros carregados.", len(membersMap)))
+	}
+
+	logStep("Validando GEMINI_API_KEY...")
+	geminiAPIKey := os.Getenv("GEMINI_API_KEY")
+	if geminiAPIKey == "" {
+		cleanupOnError()
+		return nil, fmt.Errorf("a variável de ambiente GEMINI_API_KEY não está configurada")
+	}
+	logStep("Criando cliente Gemini...")
+	geminiClient, err := genai.NewClient(ctx, &genai.ClientConfig{
+		APIKey:  geminiAPIKey,
+		Backend: genai.BackendGeminiAPI,
+	})
+	if err != nil {
+		cleanupOnError()
+		return nil, err
+	}
+	logStep("Cliente Gemini pronto.")
+
+	return &setupResult{
+		youtubeService: service,
+		channelID:      channelID,
+		members:        membersMap,
+		geminiClient:   geminiClient,
+	}, nil
 }
 
 // loadMembersFromCSV reads a CSV file containing channel members and returns a map of member channel IDs.
