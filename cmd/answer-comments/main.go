@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"encoding/csv"
 	"flag"
@@ -76,21 +75,10 @@ func main() {
 	// Clear the terminal screen (works on most terminals)
 	fmt.Print("\033[H\033[2J")
 
-	// Prepare to read user input
-	reader := bufio.NewReader(os.Stdin)
 	var pageToken string
-
-	// Ask for user confirmation before starting
-	fmt.Print("-> Pressione Enter para iniciar a verificação de novos comentários não respondidos...")
-	_, _ = reader.ReadString('\n')
 
 	// Infinite loop to continuously check for new comments
 	for {
-		fmt.Println("")
-		fmt.Println("------------------------------------------------------------------")
-		fmt.Println("Buscando novos comentários não respondidos...")
-		fmt.Println("------------------------------------------------------------------")
-
 		call := service.CommentThreads.List([]string{"snippet,replies"}).
 			AllThreadsRelatedToChannelId(myChannelId).
 			Order("time").
@@ -125,10 +113,6 @@ func main() {
 				foundUnanswered = true
 
 				isMember := membersMap["https://www.youtube.com/channel/"+comment.Snippet.AuthorChannelId.Value] // String adjusted to match full URL, that is how it appears in the CSV
-				authorPrefix := ""
-				if isMember {
-					authorPrefix = "⭐ MEMBRO ⭐ "
-				}
 
 				// Find the video title and description
 				videoCall := service.Videos.List([]string{"snippet"}).Id(comment.Snippet.VideoId)
@@ -140,24 +124,10 @@ func main() {
 					videoDescription = videoResp.Items[0].Snippet.Description
 				}
 
-				// Clear the terminal screen (works on most terminals)
-				fmt.Print("\033[H\033[2J")
-
-				// Show screen title
-				fmt.Println("------------------------------------------------------------------")
-				fmt.Println("             Novo comentário não respondido encontrado            ")
-				fmt.Println("------------------------------------------------------------------")
-				fmt.Println("")
-
-				// Show comment details
 				brTime := commentPublishedAt.In(time.FixedZone("BRT", -3*60*60))
-				fmt.Println("# Detalhes do comentário")
-				fmt.Printf("Título do vídeo: %s\n", videoTitle)
-				fmt.Printf("%sAutor: %s (Publicado em: %s)\n", authorPrefix, comment.Snippet.AuthorDisplayName, brTime.Format("02/01/2006 às 15:04"))
-				fmt.Printf("Comentário: %s\n\n", comment.Snippet.TextDisplay)
+				publishedAt := brTime.Format("02/01/2006 às 15:04")
+				commentText := comment.Snippet.TextDisplay
 
-				// Analyze comment with Gemini
-				fmt.Print("# Análise do comentário: ")
 				sentiment, err := llm.AnalyzeComment(ctx, comment.Snippet.TextOriginal, geminiClient)
 				if err != nil {
 					fmt.Println("⚠️ Não foi possível analisar o sentimento deste comentário, pulando para o próximo.")
@@ -165,17 +135,23 @@ func main() {
 					os.Exit(1)
 					continue // Jump to the next comment
 				}
-				fmt.Printf(" %s |", sentiment.Sentimento)
-				fmt.Printf(" %d |", sentiment.Nota)
-				fmt.Printf(" %s\n\n", sentiment.Tema)
+
+				overviewNotes := []string{}
+				if *manualMode {
+					overviewNotes = append(overviewNotes, "Modo manual ativado: gere e edite sua própria resposta.")
+				}
+
+				transcriptStatus := "ℹ️ Transcrição desativada para este comentário."
+				if *transcriptionMode {
+					transcriptStatus = "ℹ️ Transcrição disponível, aguardando análise."
+					if sentiment.Tema == "Saudação/Agradecimento" {
+						transcriptStatus = "ℹ️ Transcrição ignorada para Saudação/Agradecimento."
+					}
+				}
+
+				var videoTranscript string
 
 				var answer, suggestedAnswer, input string
-
-				// In manual mode, do not generate suggested answer
-				if *manualMode {
-					input = "E" // Forces manual edit mode
-					suggestedAnswer = ""
-				}
 
 				// Buscar exemplos anteriores para RAG
 				pastAnswers, err := database.GetPreviousAnswersByContext(sentiment.Tema, sentiment.Sentimento, 5)
@@ -190,38 +166,28 @@ func main() {
 					log.Printf("⚠️ Erro ao buscar histórico de comentários: %v", err)
 					authorHistory = nil
 				}
+				authorHistoryCount := len(authorHistory)
+				pastAnswersCount := len(pastAnswers)
 
 				shouldSuggestAnswer := !*manualMode && sentiment.Sentimento != "negativo" && sentiment.Nota >= 3
+				if !shouldSuggestAnswer && !*manualMode {
+					overviewNotes = append(overviewNotes, "Sugestão automática desativada para este comentário (sentimento negativo ou baixa confiança).")
+				}
 				if shouldSuggestAnswer {
 
 					// Get video transcription if flag is set
-					var videoTranscript string
 					if *transcriptionMode && sentiment.Tema != "Saudação/Agradecimento" {
-						fmt.Println("# Transcrição do vídeo")
-						fmt.Printf("Buscando transcrição do vídeo...\n")
+						transcriptStatus = "⏳ Buscando transcrição do vídeo..."
 						videoTranscript, err = yt.GetVideoTranscription(ctx, service, comment.Snippet.VideoId)
 						if err != nil {
 							log.Printf("⚠️ Não foi possível obter a transcrição: %v", err)
-							fmt.Println("⚠️ Transcrição não disponível, continuando sem ela.")
+							transcriptStatus = "⚠️ Transcrição não disponível, continuando sem ela."
 						} else {
-							fmt.Printf("✅ Transcrição obtida com sucesso (%d caracteres)\n\n", len(videoTranscript))
+							transcriptStatus = fmt.Sprintf("✅ Transcrição obtida com sucesso (%d caracteres)", len(videoTranscript))
 						}
 					}
 
-					fmt.Println("# RAG")
-
-					// If there is history, show to user
-					if len(authorHistory) > 0 {
-						fmt.Printf("✅ %d mensagens encontradas no histórico de interações anteriores com esta pessoa.\n", len(authorHistory))
-					}
-
-					// If there is similar previous answers, show to user
-					if len(pastAnswers) > 0 {
-						fmt.Printf("✅ %d respostas similares encontradas no histórico.\n", len(pastAnswers))
-					}
-
 					// Suggest answer using Gemini
-					fmt.Println("\n# Sugestão de resposta")
 					suggestedAnswer, err = llm.SuggestAnswer(ctx, sentiment.Sentimento == "negativo", comment.Snippet.TextOriginal, videoTitle, videoDescription, videoTranscript, authorHistory, isMember, pastAnswers, geminiClient)
 
 					if suggestedAnswer == "" || err != nil {
@@ -233,7 +199,6 @@ func main() {
 
 					// Show suggested answer and note
 					answer = strings.TrimSpace(suggestedAnswer)
-					fmt.Printf("%s\n", answer)
 
 					// Auto-approve positive comments with high confidence
 					if suggestedAnswer != "" && sentiment.Sentimento == "positivo" && sentiment.Nota >= 4 && *autoAnswerMode {
@@ -244,17 +209,40 @@ func main() {
 						time.Sleep(3 * time.Second)
 					}
 
-					// If not auto-approved, ask user
-					if input == "" {
-						fmt.Printf("\nDeseja publicar esta resposta? (S/N/E/Q para sair): ")
-						input, _ = reader.ReadString('\n')
-						input = strings.TrimSpace(strings.ToUpper(input))
+				}
+
+				if input == "" {
+					responseData := responseDecisionData{
+						VideoTitle:         videoTitle,
+						Author:             comment.Snippet.AuthorDisplayName,
+						IsMember:           isMember,
+						Comment:            commentText,
+						SuggestedAnswer:    suggestedAnswer,
+						Sentiment:          sentiment.Sentimento,
+						Score:              sentiment.Nota,
+						Topic:              sentiment.Tema,
+						PublishedAt:        publishedAt,
+						AuthorHistoryCount: authorHistoryCount,
+						PastAnswersCount:   pastAnswersCount,
+						TranscriptStatus:   transcriptStatus,
+						Notes:              overviewNotes,
+						ManualMode:         *manualMode,
+					}
+					selection, exitApp, err := runResponseDecisionScreen(responseData)
+					if err != nil {
+						log.Printf("⚠️ Erro ao exibir tela de decisão: %v", err)
+						input = "N"
+					} else if exitApp {
+						fmt.Println("Encerrando a aplicação.")
+						return
+					} else {
+						input = selection
 					}
 				}
 
 				// If no suggested answer, force edit. Only if not already in manual mode
 				if suggestedAnswer == "" && input == "" {
-					fmt.Println("⚠️ Optei por não gerar uma resposta automática para este comentário.")
+					displayStatus(*autoAnswerMode, "Sugestão indisponível", "⚠️ Optei por não gerar uma resposta automática para este comentário.")
 					input = "E"
 				}
 
@@ -263,63 +251,72 @@ func main() {
 					err := yt.PublishComment(service, comment.Id, answer)
 					if err != nil {
 						log.Printf("Falha ao publicar resposta: %v", err)
-						fmt.Println("Erro ao publicar a resposta. Tente novamente mais tarde.")
+						displayStatus(*autoAnswerMode, "Erro ao publicar", "Erro ao publicar a resposta. Tente novamente mais tarde.")
 					} else {
-						// Save to database
 						if err := database.SaveComment(comment, sentiment.Sentimento, sentiment.Nota, sentiment.Tema, answer, false); err != nil {
 							log.Printf("⚠️ Erro ao salvar resposta no banco de dados: %v", err)
-							fmt.Println("✅ Resposta publicada, mas houve erro ao salvar no histórico local!")
+							displayStatus(*autoAnswerMode, "Aviso", "✅ Resposta publicada, mas houve erro ao salvar no histórico local!")
 						} else {
-							fmt.Println("✅ Resposta publicada e salva com sucesso!")
+							displayStatus(*autoAnswerMode, "Sucesso", "✅ Resposta publicada e salva com sucesso!")
 						}
 					}
 				case "E":
-					fmt.Print("Digite a resposta que deseja publicar:\n> ")
-					editedAnswer, _ := reader.ReadString('\n')
-					editedAnswer = strings.TrimSpace(editedAnswer)
-					answer = editedAnswer
-					if editedAnswer == "" {
-						fmt.Println("🚫 Resposta vazia. Seguindo para o próximo comentário.")
+					initialText := strings.TrimSpace(answer)
+					editedAnswer, canceled, err := runEditAnswerScreen(initialText)
+					if err != nil {
+						log.Printf("Falha ao exibir editor de respostas: %v", err)
+						displayStatus(*autoAnswerMode, "Erro", "Não foi possível abrir o editor de respostas. Tente novamente mais tarde.")
 						break
 					}
-					err := yt.PublishComment(service, comment.Id, editedAnswer)
+					if canceled {
+						displayStatus(*autoAnswerMode, "Edição cancelada", "Resposta não publicada. Seguindo para o próximo comentário.")
+						break
+					}
+					editedAnswer = strings.TrimSpace(editedAnswer)
+					if editedAnswer == "" {
+						displayStatus(*autoAnswerMode, "Resposta vazia", "🚫 Resposta vazia. Seguindo para o próximo comentário.")
+						break
+					}
+					answer = editedAnswer
+					err = yt.PublishComment(service, comment.Id, editedAnswer)
 					if err != nil {
 						log.Printf("Falha ao publicar resposta: %v", err)
-						fmt.Println("Erro ao publicar a resposta. Tente novamente mais tarde.")
+						displayStatus(*autoAnswerMode, "Erro ao publicar", "Erro ao publicar a resposta. Tente novamente mais tarde.")
 					} else {
-						// Save to database with userAnswered flag
 						if err := database.SaveComment(comment, sentiment.Sentimento, sentiment.Nota, sentiment.Tema, editedAnswer, true); err != nil {
 							log.Printf("⚠️ Erro ao salvar resposta no banco de dados: %v", err)
-							fmt.Println("✅ Resposta editada publicada, mas houve erro ao salvar no histórico local!")
+							displayStatus(*autoAnswerMode, "Aviso", "✅ Resposta editada publicada, mas houve erro ao salvar no histórico local!")
 						} else {
-							fmt.Println("✅ Resposta editada publicada e salva com sucesso!")
+							displayStatus(*autoAnswerMode, "Sucesso", "✅ Resposta editada publicada e salva com sucesso!")
 						}
 					}
 				case "Q":
-					fmt.Println("Encerrando a aplicação.")
+					displayStatus(*autoAnswerMode, "Encerrando", "Encerrando a aplicação.")
 					return
 				default:
-					fmt.Println("🚫 Resposta não publicada. Seguindo para o próximo comentário.")
+					displayStatus(*autoAnswerMode, "Aviso", "🚫 Resposta não publicada. Seguindo para o próximo comentário.")
 				}
-
-				fmt.Println("")
 			}
 		}
 
 		if !foundUnanswered {
 			if pageToken == "" {
-				fmt.Println("\nNão há mais comentários não respondidos em todas as páginas disponíveis.")
-				fmt.Println("Encerrando a aplicação.")
-				return // Exit the application
-			} else {
-				fmt.Println("\nNão há mais comentários não respondidos neste lote.")
-				fmt.Printf("Pressione Enter para buscar o próximo lote de comentários, ou digite 'Q' para sair: ")
-				input, _ := reader.ReadString('\n')
-				input = strings.TrimSpace(strings.ToUpper(input))
-				if input == "Q" {
-					fmt.Println("Encerrando a aplicação.")
-					return
+				finalMessage := "Não há mais comentários não respondidos em todas as páginas disponíveis.\nEncerrando a aplicação."
+				if err := showMessageModal("Sem novos comentários", finalMessage); err != nil {
+					log.Printf("⚠️ Não foi possível exibir mensagem final: %v", err)
 				}
+				return
+			}
+			exitApp, err := runNextBatchPrompt()
+			if err != nil {
+				log.Printf("⚠️ Erro ao exibir prompt de próximo lote: %v", err)
+				exitApp = true
+			}
+			if exitApp {
+				if err := showMessageModal("Encerrando", "Encerrando a aplicação."); err != nil {
+					log.Printf("⚠️ Não foi possível exibir mensagem de encerramento: %v", err)
+				}
+				return
 			}
 		}
 	}
@@ -451,6 +448,343 @@ func runPreparationScreen(ctx context.Context, manualMode, autoMode, useTranscri
 		return nil, false, setupErr
 	}
 	return result, false, nil
+}
+
+type responseDecisionData struct {
+	VideoTitle         string
+	Author             string
+	IsMember           bool
+	Comment            string
+	SuggestedAnswer    string
+	Sentiment          string
+	Score              int
+	Topic              string
+	PublishedAt        string
+	AuthorHistoryCount int
+	PastAnswersCount   int
+	TranscriptStatus   string
+	Notes              []string
+	ManualMode         bool
+}
+
+func runResponseDecisionScreen(data responseDecisionData) (string, bool, error) {
+	app := tview.NewApplication()
+	var selection string
+	var exit bool
+
+	author := data.Author
+	if data.IsMember {
+		author = fmt.Sprintf("⭐ MEMBRO ⭐ %s", author)
+	}
+	titleText := tview.Escape(data.VideoTitle)
+	authorText := tview.Escape(author)
+	sentLabel := data.Sentiment
+	if len(sentLabel) > 0 {
+		sentLabel = strings.ToUpper(sentLabel[:1]) + sentLabel[1:]
+	}
+	sentLabelText := tview.Escape(sentLabel)
+	transcriptStatus := tview.Escape(data.TranscriptStatus)
+	noteLines := make([]string, 0, len(data.Notes))
+	for _, note := range data.Notes {
+		noteLines = append(noteLines, tview.Escape(note))
+	}
+	detailText := fmt.Sprintf("Vídeo: %s\nAutor: %s\nPublicado em: %s\nTema: %s\nSentimento: %s (%d)\nHistórico do autor: %d mensagens\nRespostas similares: %d\n%s",
+		titleText,
+		authorText,
+		data.PublishedAt,
+		tview.Escape(data.Topic),
+		sentLabelText,
+		data.Score,
+		data.AuthorHistoryCount,
+		data.PastAnswersCount,
+		transcriptStatus,
+	)
+	if len(noteLines) > 0 {
+		detailText += "\n" + strings.Join(noteLines, "\n")
+	}
+
+	detailView := tview.NewTextView()
+	detailView.SetDynamicColors(true)
+	detailView.SetWrap(true)
+	detailView.SetBorder(true)
+	detailView.SetTitle("Resumo do comentário")
+	detailView.SetChangedFunc(func() { app.Draw() })
+	detailView.SetText(detailText)
+
+	commentBox := tview.NewTextView()
+	commentBox.SetDynamicColors(false)
+	commentBox.SetWrap(true)
+	commentBox.SetBorder(true)
+	commentBox.SetTitle("Comentário original")
+	commentBox.SetChangedFunc(func() { app.Draw() })
+	commentBox.SetText(tview.Escape(data.Comment))
+
+	suggestionText := strings.TrimSpace(data.SuggestedAnswer)
+	if suggestionText == "" {
+		if data.ManualMode {
+			suggestionText = "Modo manual: gere sua resposta usando o botão 'Editar'."
+		} else {
+			suggestionText = "Sem sugestão automática disponível para este comentário."
+		}
+	}
+	suggestionBox := tview.NewTextView()
+	suggestionBox.SetDynamicColors(false)
+	suggestionBox.SetWrap(true)
+	suggestionBox.SetBorder(true)
+	suggestionBox.SetTitle("Sugestão da IA")
+	suggestionBox.SetChangedFunc(func() { app.Draw() })
+	suggestionBox.SetText(tview.Escape(suggestionText))
+
+	headline := tview.NewTextView().
+		SetDynamicColors(true).
+		SetTextAlign(tview.AlignCenter).
+		SetText("[::b]Novo comentário não respondido encontrado[-]")
+
+	middleRow := tview.NewFlex().
+		AddItem(commentBox, 0, 1, false).
+		AddItem(suggestionBox, 0, 1, false)
+
+	body := tview.NewFlex().
+		SetDirection(tview.FlexRow).
+		AddItem(headline, 3, 0, false).
+		AddItem(detailView, 0, 2, false).
+		AddItem(middleRow, 0, 3, false)
+
+	allowPublish := strings.TrimSpace(data.SuggestedAnswer) != "" && !data.ManualMode
+	buttonConfigs := []struct {
+		label string
+		value string
+		show  bool
+	}{
+		{"Publicar", "S", allowPublish},
+		{"Editar", "E", true},
+		{"Pular", "N", !data.ManualMode},
+		{"Sair", "", true},
+	}
+
+	buttonRow := tview.NewFlex()
+	var focusables []tview.Primitive
+	for _, cfg := range buttonConfigs {
+		if !cfg.show {
+			continue
+		}
+		btn := tview.NewButton(cfg.label)
+		value := cfg.value
+		btn.SetSelectedFunc(func() {
+			if value == "" {
+				exit = true
+			} else {
+				selection = value
+			}
+			app.Stop()
+		})
+		buttonRow.AddItem(btn, 0, 1, len(focusables) == 0)
+		focusables = append(focusables, btn)
+	}
+	if len(focusables) == 0 {
+		// fallback to edit
+		btn := tview.NewButton("Editar")
+		btn.SetSelectedFunc(func() {
+			selection = "E"
+			app.Stop()
+		})
+		buttonRow.AddItem(btn, 0, 1, true)
+		focusables = append(focusables, btn)
+	}
+
+	currentFocus := 0
+	updateFocus := func(next int) {
+		if len(focusables) == 0 {
+			return
+		}
+		if next < 0 {
+			next = len(focusables) - 1
+		} else if next >= len(focusables) {
+			next = 0
+		}
+		currentFocus = next
+		app.SetFocus(focusables[currentFocus])
+	}
+
+	layout := tview.NewFlex().
+		SetDirection(tview.FlexRow).
+		AddItem(body, 0, 1, false).
+		AddItem(buttonRow, 3, 0, true)
+
+	layout.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		switch event.Key() {
+		case tcell.KeyTab, tcell.KeyRight:
+			updateFocus(currentFocus + 1)
+			return nil
+		case tcell.KeyBacktab, tcell.KeyLeft:
+			updateFocus(currentFocus - 1)
+			return nil
+		case tcell.KeyEscape:
+			exit = true
+			app.Stop()
+			return nil
+		}
+		return event
+	})
+
+	if err := app.SetRoot(layout, true).SetFocus(focusables[0]).Run(); err != nil {
+		return "", false, err
+	}
+
+	if exit {
+		return "", true, nil
+	}
+	return selection, false, nil
+}
+
+func displayStatus(autoMode bool, title, text string) {
+	title = strings.TrimSpace(title)
+	text = strings.TrimSpace(text)
+	if title == "" && text == "" {
+		return
+	}
+	if autoMode {
+		return
+	}
+	var err error
+	if strings.EqualFold(title, "Sucesso") {
+		err = showTimedMessageModal(title, text, 7*time.Second)
+	} else {
+		err = showMessageModal(title, text)
+	}
+	if err != nil {
+		log.Printf("⚠️ Não foi possível exibir mensagem: %v", err)
+	}
+}
+
+func showMessageModal(title, text string) error {
+	return runMessageModal(title, text, 0)
+}
+
+func showTimedMessageModal(title, text string, duration time.Duration) error {
+	if duration <= 0 {
+		return runMessageModal(title, text, 0)
+	}
+	return runMessageModal(title, text, duration)
+}
+
+func runMessageModal(title, text string, duration time.Duration) error {
+	app := tview.NewApplication()
+	safeTitle := tview.Escape(strings.TrimSpace(title))
+	safeText := tview.Escape(strings.TrimSpace(text))
+	var content string
+	if safeTitle != "" {
+		content = fmt.Sprintf("[::b]%s[-]\n\n%s", safeTitle, safeText)
+	} else {
+		content = safeText
+	}
+	if duration > 0 {
+		countdown := fmt.Sprintf("\n\n[gray]Esta janela será fechada automaticamente em %d segundos.[-]", int(duration.Seconds()))
+		content += countdown
+	}
+	modal := tview.NewModal().
+		SetText(content).
+		AddButtons([]string{"OK"})
+	var timer *time.Timer
+	modal.SetDoneFunc(func(buttonIndex int, buttonLabel string) {
+		if timer != nil && !timer.Stop() {
+			<-timer.C
+		}
+		app.Stop()
+	})
+	if duration > 0 {
+		timer = time.NewTimer(duration)
+		go func() {
+			<-timer.C
+			app.Stop()
+		}()
+	}
+	return app.SetRoot(modal, true).Run()
+}
+
+func runNextBatchPrompt() (bool, error) {
+	app := tview.NewApplication()
+	var exit bool
+	header := tview.Escape("Não há mais comentários não respondidos neste lote.")
+	body := tview.Escape("Deseja buscar o próximo lote ou encerrar a aplicação?")
+	content := fmt.Sprintf("[::b]%s[-]\n\n%s", header, body)
+	modal := tview.NewModal().
+		SetText(content).
+		AddButtons([]string{"Buscar próximo lote", "Sair"}).
+		SetDoneFunc(func(buttonIndex int, buttonLabel string) {
+			if buttonLabel == "Sair" {
+				exit = true
+			}
+			app.Stop()
+		})
+	return exit, app.SetRoot(modal, true).Run()
+}
+
+func runEditAnswerScreen(initial string) (string, bool, error) {
+	app := tview.NewApplication()
+	var result string
+	var canceled bool
+	initialText := strings.TrimSpace(initial)
+
+	info := tview.NewTextView().
+		SetDynamicColors(true).
+		SetWrap(true).
+		SetText("[::b]Edite a resposta abaixo[-]\nUse Tab para navegar entre os campos e botões. Pressione Esc para cancelar e Ctrl+S para salvar.")
+
+	originalView := tview.NewTextView()
+	originalView.SetDynamicColors(false)
+	originalView.SetWrap(true)
+	originalView.SetBorder(true)
+	originalView.SetTitle("Sugestão atual")
+	if initialText == "" {
+		originalView.SetText("Nenhuma sugestão disponível para este comentário.")
+	} else {
+		originalView.SetText(initialText)
+	}
+
+	textArea := tview.NewTextArea().
+		SetLabel("Resposta").
+		SetPlaceholder("Digite a resposta que deseja publicar...").
+		SetWrap(true).
+		SetWordWrap(true)
+	textArea.SetText("", false)
+	textArea.SetFinishedFunc(func(key tcell.Key) {
+		switch key {
+		case tcell.KeyEscape:
+			canceled = true
+			app.Stop()
+		case tcell.KeyCtrlS:
+			result = textArea.GetText()
+			app.Stop()
+		}
+	})
+
+	form := tview.NewForm().
+		AddFormItem(textArea)
+	form.AddButton("Salvar", func() {
+		result = textArea.GetText()
+		app.Stop()
+	})
+	form.AddButton("Cancelar", func() {
+		canceled = true
+		app.Stop()
+	})
+	form.SetButtonsAlign(tview.AlignCenter)
+	form.SetBorder(true).SetTitle("Editar resposta")
+
+	layout := tview.NewFlex().
+		SetDirection(tview.FlexRow).
+		AddItem(info, 3, 0, false).
+		AddItem(originalView, 0, 1, false).
+		AddItem(form, 0, 2, true)
+
+	if err := app.SetRoot(layout, true).SetFocus(textArea).Run(); err != nil {
+		return "", false, err
+	}
+	if canceled {
+		return "", true, nil
+	}
+	return strings.TrimSpace(result), false, nil
 }
 
 func performSetup(ctx context.Context, useTranscription bool, logStep func(string)) (*setupResult, error) {
