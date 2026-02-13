@@ -280,7 +280,7 @@ func main() {
 					}
 				case "E":
 					initialText := strings.TrimSpace(answer)
-					editedAnswer, canceled, err := runEditAnswerScreen(initialText)
+					editedAnswer, canceled, err := runEditAnswerScreen(commentText, initialText)
 					if err != nil {
 						log.Printf("Falha ao exibir editor de respostas: %v", err)
 						displayStatus(*autoAnswerMode, "Erro", "Não foi possível abrir o editor de respostas. Tente novamente mais tarde.")
@@ -757,27 +757,68 @@ func runNextBatchPrompt() (bool, error) {
 }
 
 // runEditAnswerScreen opens a text editor interface for the user to edit the suggested answer or create a new one.
-func runEditAnswerScreen(initial string) (string, bool, error) {
+func runEditAnswerScreen(commentText string, initial string) (string, bool, error) {
 	app := tview.NewApplication()
 	var result string
 	var canceled bool
 	initialText := strings.TrimSpace(initial)
 
-	info := tview.NewTextView().
-		SetDynamicColors(true).
-		SetWrap(true).
-		SetText("[::b]Edite a resposta abaixo[-]\nUse Tab para navegar entre os campos e botões. Pressione Esc para cancelar e Ctrl+S para salvar.")
+	// Create individual shortcut panels
+	f1Panel := tview.NewTextView()
+	f1Panel.SetBorder(true)
+	f1Panel.SetDynamicColors(true)
+	f1Panel.SetTextAlign(tview.AlignCenter)
+	f1Panel.SetText("[yellow]F1[-]\nDeus abençoe!")
 
-	originalView := tview.NewTextView()
-	originalView.SetDynamicColors(false)
-	originalView.SetWrap(true)
-	originalView.SetBorder(true)
-	originalView.SetTitle("Sugestão atual")
+	f2Panel := tview.NewTextView()
+	f2Panel.SetBorder(true)
+	f2Panel.SetDynamicColors(true)
+	f2Panel.SetTextAlign(tview.AlignCenter)
+	f2Panel.SetText("[yellow]F2[-]\nAmém!")
+
+	escPanel := tview.NewTextView()
+	escPanel.SetBorder(true)
+	escPanel.SetDynamicColors(true)
+	escPanel.SetTextAlign(tview.AlignCenter)
+	escPanel.SetText("[red]Esc[-]\nCancelar")
+
+	tabPanel := tview.NewTextView()
+	tabPanel.SetBorder(true)
+	tabPanel.SetDynamicColors(true)
+	tabPanel.SetTextAlign(tview.AlignCenter)
+	tabPanel.SetText("[blue]Tab[-]\nNavegar")
+
+	// Create horizontal row for shortcuts
+	shortcutsRow := tview.NewFlex().
+		AddItem(f1Panel, 0, 1, false).
+		AddItem(f2Panel, 0, 1, false).
+		AddItem(escPanel, 0, 1, false).
+		AddItem(tabPanel, 0, 1, false)
+
+	// Create original comment panel
+	commentView := tview.NewTextView()
+	commentView.SetDynamicColors(true)
+	commentView.SetWrap(true)
+	commentView.SetBorder(true)
+	commentView.SetTitle("Comentário Original")
+	commentView.SetText(tview.Escape(commentText))
+
+	// Create suggestion panel
+	suggestionView := tview.NewTextView()
+	suggestionView.SetDynamicColors(false)
+	suggestionView.SetWrap(true)
+	suggestionView.SetBorder(true)
+	suggestionView.SetTitle("Sugestão atual")
 	if initialText == "" {
-		originalView.SetText("Nenhuma sugestão disponível para este comentário.")
+		suggestionView.SetText("Nenhuma sugestão disponível para este comentário.")
 	} else {
-		originalView.SetText(initialText)
+		suggestionView.SetText(initialText)
 	}
+
+	// Create 2-column row with comment and suggestion side-by-side
+	twoColumnRow := tview.NewFlex().
+		AddItem(commentView, 0, 1, false).
+		AddItem(suggestionView, 0, 1, false)
 
 	textArea := tview.NewTextArea().
 		SetLabel("Resposta").
@@ -785,15 +826,33 @@ func runEditAnswerScreen(initial string) (string, bool, error) {
 		SetWrap(true).
 		SetWordWrap(true)
 	textArea.SetText("", false)
-	textArea.SetFinishedFunc(func(key tcell.Key) {
-		switch key {
+
+	// Handle template shortcuts and cancel
+	textArea.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		switch event.Key() {
+		case tcell.KeyF1:
+			// F1: Insert "Deus abençoe!"
+			currentText := textArea.GetText()
+			if currentText != "" && !strings.HasSuffix(currentText, " ") && !strings.HasSuffix(currentText, "\n") {
+				currentText += " "
+			}
+			textArea.SetText(currentText+"Deus abençoe!", true)
+			return nil
+		case tcell.KeyF2:
+			// F2: Insert "Amém!"
+			currentText := textArea.GetText()
+			if currentText != "" && !strings.HasSuffix(currentText, " ") && !strings.HasSuffix(currentText, "\n") {
+				currentText += " "
+			}
+			textArea.SetText(currentText+"Amém!", true)
+			return nil
 		case tcell.KeyEscape:
+			// Esc: Cancel
 			canceled = true
 			app.Stop()
-		case tcell.KeyCtrlS:
-			result = textArea.GetText()
-			app.Stop()
+			return nil
 		}
+		return event
 	})
 
 	form := tview.NewForm().
@@ -811,8 +870,8 @@ func runEditAnswerScreen(initial string) (string, bool, error) {
 
 	layout := tview.NewFlex().
 		SetDirection(tview.FlexRow).
-		AddItem(info, 3, 0, false).
-		AddItem(originalView, 0, 1, false).
+		AddItem(shortcutsRow, 4, 0, false).
+		AddItem(twoColumnRow, 0, 1, false).
 		AddItem(form, 0, 2, true)
 
 	if err := app.SetRoot(layout, true).SetFocus(textArea).Run(); err != nil {
