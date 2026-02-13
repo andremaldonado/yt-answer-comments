@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"answer-comments/internal/database"
@@ -112,6 +113,21 @@ func main() {
 			if !isAnsweredByMe {
 				foundUnanswered = true
 
+				// Show a loading screen while processing the comment
+				stopLoading := func() {}
+				if closer, err := runLoadingScreen("Processando comentário..."); err != nil {
+					log.Printf("⚠️ Não foi possível exibir tela de carregamento: %v", err)
+				} else {
+					stopLoading = func() {
+						if closer != nil {
+							if err := closer(); err != nil {
+								log.Printf("⚠️ Erro ao fechar tela de carregamento: %v", err)
+							}
+						}
+						closer = nil
+					}
+				}
+
 				isMember := membersMap["https://www.youtube.com/channel/"+comment.Snippet.AuthorChannelId.Value] // String adjusted to match full URL, that is how it appears in the CSV
 
 				// Find the video title and description
@@ -130,6 +146,7 @@ func main() {
 
 				sentiment, err := llm.AnalyzeComment(ctx, comment.Snippet.TextOriginal, geminiClient)
 				if err != nil {
+					stopLoading()
 					fmt.Println("⚠️ Não foi possível analisar o sentimento deste comentário, pulando para o próximo.")
 					fmt.Println("Error:", err)
 					os.Exit(1)
@@ -191,6 +208,7 @@ func main() {
 					suggestedAnswer, err = llm.SuggestAnswer(ctx, sentiment.Sentimento == "negativo", comment.Snippet.TextOriginal, videoTitle, videoDescription, videoTranscript, authorHistory, isMember, pastAnswers, geminiClient)
 
 					if suggestedAnswer == "" || err != nil {
+						stopLoading()
 						fmt.Println("⚠️ Não foi possível gerar uma sugestão de resposta para este comentário. Seguindo para o próximo comentário.")
 						fmt.Println("Error:", err)
 						fmt.Println("")
@@ -211,6 +229,7 @@ func main() {
 
 				}
 
+				stopLoading()
 				if input == "" {
 					responseData := responseDecisionData{
 						VideoTitle:         videoTitle,
@@ -256,8 +275,7 @@ func main() {
 						if err := database.SaveComment(comment, sentiment.Sentimento, sentiment.Nota, sentiment.Tema, answer, false); err != nil {
 							log.Printf("⚠️ Erro ao salvar resposta no banco de dados: %v", err)
 							displayStatus(*autoAnswerMode, "Aviso", "✅ Resposta publicada, mas houve erro ao salvar no histórico local!")
-						} else {
-							displayStatus(*autoAnswerMode, "Sucesso", "✅ Resposta publicada e salva com sucesso!")
+
 						}
 					}
 				case "E":
@@ -286,8 +304,7 @@ func main() {
 						if err := database.SaveComment(comment, sentiment.Sentimento, sentiment.Nota, sentiment.Tema, editedAnswer, true); err != nil {
 							log.Printf("⚠️ Erro ao salvar resposta no banco de dados: %v", err)
 							displayStatus(*autoAnswerMode, "Aviso", "✅ Resposta editada publicada, mas houve erro ao salvar no histórico local!")
-						} else {
-							displayStatus(*autoAnswerMode, "Sucesso", "✅ Resposta editada publicada e salva com sucesso!")
+
 						}
 					}
 				case "Q":
@@ -322,6 +339,7 @@ func main() {
 	}
 }
 
+// setupResult holds the initialized services and data needed to run the main application loop, including the YouTube service client, authenticated channel ID, members map, and Gemini client.
 type setupResult struct {
 	youtubeService *youtube.Service
 	channelID      string
@@ -329,6 +347,7 @@ type setupResult struct {
 	geminiClient   *genai.Client
 }
 
+// runPreparationScreen initializes the application environment, including YouTube service, Gemini client, and loading members. It provides real-time feedback on the setup progress and handles any errors that may occur during initialization. The user can choose to proceed with the setup or exit the application if any critical error occurs.
 func runPreparationScreen(ctx context.Context, manualMode, autoMode, useTranscription bool) (*setupResult, bool, error) {
 	setupCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -450,6 +469,7 @@ func runPreparationScreen(ctx context.Context, manualMode, autoMode, useTranscri
 	return result, false, nil
 }
 
+// performSetup initializes the YouTube service, Gemini client, loads members and prepares the environment. It logs progress through the provided logStep callback.
 type responseDecisionData struct {
 	VideoTitle         string
 	Author             string
@@ -467,6 +487,7 @@ type responseDecisionData struct {
 	ManualMode         bool
 }
 
+// runResponseDecisionScreen displays the comment details, sentiment analysis, and suggested answer (if available), allowing the user to choose whether to publish, edit, skip, or exit.
 func runResponseDecisionScreen(data responseDecisionData) (string, bool, error) {
 	app := tview.NewApplication()
 	var selection string
@@ -637,6 +658,7 @@ func runResponseDecisionScreen(data responseDecisionData) (string, bool, error) 
 	return selection, false, nil
 }
 
+// displayStatus shows a modal message with the given title and text. If autoMode is true, it will not display anything to avoid interrupting the flow.
 func displayStatus(autoMode bool, title, text string) {
 	title = strings.TrimSpace(title)
 	text = strings.TrimSpace(text)
@@ -646,28 +668,17 @@ func displayStatus(autoMode bool, title, text string) {
 	if autoMode {
 		return
 	}
-	var err error
-	if strings.EqualFold(title, "Sucesso") {
-		err = showTimedMessageModal(title, text, 7*time.Second)
-	} else {
-		err = showMessageModal(title, text)
-	}
-	if err != nil {
+	if err := showMessageModal(title, text); err != nil {
 		log.Printf("⚠️ Não foi possível exibir mensagem: %v", err)
 	}
 }
 
+// showMessageModal displays a simple modal with a title and message, waiting for user confirmation to close.
 func showMessageModal(title, text string) error {
 	return runMessageModal(title, text, 0)
 }
 
-func showTimedMessageModal(title, text string, duration time.Duration) error {
-	if duration <= 0 {
-		return runMessageModal(title, text, 0)
-	}
-	return runMessageModal(title, text, duration)
-}
-
+// runMessageModal displays a simple modal with a title and message. If duration is greater than 0, it will automatically close after the specified time.
 func runMessageModal(title, text string, duration time.Duration) error {
 	app := tview.NewApplication()
 	safeTitle := tview.Escape(strings.TrimSpace(title))
@@ -702,6 +713,31 @@ func runMessageModal(title, text string, duration time.Duration) error {
 	return app.SetRoot(modal, true).Run()
 }
 
+// runLoadingScreen displays a simple loading screen with a message and returns a function to stop it.
+// The returned function should be called to dismiss the loading screen before presenting another UI.
+func runLoadingScreen(message string) (func() error, error) {
+	app := tview.NewApplication()
+	safeMessage := tview.Escape(strings.TrimSpace(message))
+	content := fmt.Sprintf("[yellow]%s[-]\n\n[gray]Por favor, aguarde...[-]", safeMessage)
+	modal := tview.NewModal().
+		SetText(content)
+	errChan := make(chan error, 1)
+	go func() {
+		errChan <- app.SetRoot(modal, true).Run()
+	}()
+	var once sync.Once
+	var result error
+	stop := func() error {
+		once.Do(func() {
+			app.Stop()
+			result = <-errChan
+		})
+		return result
+	}
+	return stop, nil
+}
+
+// runNextBatchPrompt shows a prompt when there are no more unanswered comments in the current batch, asking the user if they want to fetch the next batch or exit the application.
 func runNextBatchPrompt() (bool, error) {
 	app := tview.NewApplication()
 	var exit bool
@@ -720,6 +756,7 @@ func runNextBatchPrompt() (bool, error) {
 	return exit, app.SetRoot(modal, true).Run()
 }
 
+// runEditAnswerScreen opens a text editor interface for the user to edit the suggested answer or create a new one.
 func runEditAnswerScreen(initial string) (string, bool, error) {
 	app := tview.NewApplication()
 	var result string
@@ -787,6 +824,7 @@ func runEditAnswerScreen(initial string) (string, bool, error) {
 	return strings.TrimSpace(result), false, nil
 }
 
+// performSetup initializes the application environment, including database connection, YouTube API client, and Gemini API client.
 func performSetup(ctx context.Context, useTranscription bool, logStep func(string)) (*setupResult, error) {
 	if logStep == nil {
 		logStep = func(string) {}
