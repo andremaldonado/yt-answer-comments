@@ -69,10 +69,25 @@ go build -o answer-comments ./cmd/answer-comments/main.go
 
 Na primeira execução, o aplicativo solicitará que você acesse uma URL para autorizar o acesso ao seu canal. Cole o código de autorização fornecido pelo navegador na linha de comando. O `token.json` será salvo automaticamente.
 
-Fluxo de uso:
-- O programa busca comentários não respondidos do canal autenticado.
-- Para cada comentário não respondido, ele gera uma sugestão de resposta via Gemini.
-- O programa exibe a sugestão (e uma nota de entendimento) e pergunta se você deseja publicar. Responda `S` para publicar, `N` para pular ou `Q` para sair.
+## Interface e Atalhos
+
+### Tela de Decisão de Resposta
+
+Após gerar uma sugestão de resposta, o programa apresenta as seguintes opções:
+- `S` - Publicar a resposta sugerida
+- `E` - Editar a resposta antes de publicar
+- `N` - Pular este comentário (não publicar)
+- `Q` - Sair do programa
+
+### Tela de Edição
+
+Quando você escolhe editar (`E`), os seguintes atalhos estão disponíveis:
+- `Tab` - Navegar entre campos e botões
+- `Esc` - Cancelar edição e voltar
+- `F1` - Inserir "Deus abençoe!" no texto
+- `F2` - Inserir "Amém!" no texto
+
+Os templates (F1 e F2) são adicionados ao final do texto atual, permitindo combinar múltiplas respostas.
 
 ## Observações de segurança
 
