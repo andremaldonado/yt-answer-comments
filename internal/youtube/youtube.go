@@ -34,7 +34,10 @@ func tokenFromFile(file string) (*oauth2.Token, error) {
 // GetYoutubeClient uses a Context and Config to retrieve a Token
 // then generate a Client. It returns the generated Client.
 func GetYoutubeClient(config *oauth2.Config) (*http.Client, error) {
-	tokFile := "token.json"
+	tokFile := os.Getenv("TOKEN_FILE")
+	if tokFile == "" {
+		tokFile = "data/token.json"
+	}
 	tok, err := tokenFromFile(tokFile)
 	if err != nil {
 		tok, err = getYoutubeTokenFromWeb(config)
