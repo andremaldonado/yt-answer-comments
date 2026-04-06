@@ -9,6 +9,7 @@ import (
 
 	"answer-comments/internal/app"
 	"answer-comments/internal/service"
+	"answer-comments/internal/ui"
 )
 
 func main() {
@@ -43,17 +44,16 @@ func main() {
 	flag.BoolVar(transcriptionMode, "t", false, "Atalho para --transcription")
 	flag.Parse()
 
-	// Clear the terminal screen
-	fmt.Print("\033[H\033[2J")
+	ui.ClearScreen()
 
 	if *manualMode {
-		fmt.Print("⚠️ Modo manual ativado ⚠️ \nTodas as respostas deverão ser editadas manualmente.\n\n")
+		ui.PrintModeBanner("✏️", "Modo Manual Ativado", "Todas as respostas deverão ser editadas manualmente.", ui.FgBrightYellow)
 	}
 	if *autoAnswerMode {
-		fmt.Print("⚠️ Modo de auto-resposta ativado ⚠️ \nTodas as respostas sugeridas e com alto nível de confiança serão publicadas automaticamente sem confirmação.\n\n")
+		ui.PrintModeBanner("🤖", "Modo Auto-Resposta Ativado", "Respostas com alto nível de confiança serão publicadas automaticamente.", ui.FgBrightGreen)
 	}
 	if *transcriptionMode {
-		fmt.Print("⚠️ Modo de transcrição ativado ⚠️ \nA transcrição automática dos vídeos será usada como contexto para a LLM (exceto para comentários de Saudação/Agradecimento).\n\n")
+		ui.PrintModeBanner("🎙️", "Modo Transcrição Ativado", "A transcrição dos vídeos será usada como contexto para a LLM.", ui.FgBrightCyan)
 	}
 
 	ctx := context.Background()
@@ -66,7 +66,7 @@ func main() {
 	}
 	defer myApp.Close()
 
-	fmt.Printf("✅ Autenticado com sucesso! ID do seu canal: %s\n\n", myApp.ChannelID)
+	ui.Success("Autenticado com sucesso! ID do seu canal: " + myApp.ChannelID)
 
 	// Initialize Service
 	commentService := service.NewCommentService(myApp)

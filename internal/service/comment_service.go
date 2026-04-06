@@ -14,6 +14,7 @@ import (
 	"answer-comments/internal/database"
 	"answer-comments/internal/llm"
 	"answer-comments/internal/models"
+	"answer-comments/internal/ui"
 	yt "answer-comments/internal/youtube"
 
 	"google.golang.org/api/youtube/v3"
@@ -39,19 +40,17 @@ func (s *CommentService) ProcessComments(ctx context.Context, opts AnswerOptions
 	if err != nil {
 		log.Printf("Não foi possível carregar a lista de membros: %v", err)
 	}
-	fmt.Printf("✅ Carregados %d membros a partir do arquivo.\n\n", len(membersMap))
+	ui.Success(fmt.Sprintf("Carregados %d membros a partir do arquivo.", len(membersMap)))
 
 	reader := bufio.NewReader(os.Stdin)
 	var pageToken string
 
-	fmt.Print("-> Pressione Enter para iniciar a verificação de novos comentários não respondidos...")
+	fmt.Println()
+	fmt.Printf("  %s→ Pressione Enter para iniciar a verificação de comentários...%s ", ui.FgBrightCyan+ui.Bold, ui.Reset)
 	_, _ = reader.ReadString('\n')
 
 	for {
-		fmt.Println("")
-		fmt.Println("------------------------------------------------------------------")
-		fmt.Println("Buscando novos comentários não respondidos...")
-		fmt.Println("------------------------------------------------------------------")
+		ui.PrintSearchingBanner()
 
 		call := s.App.YTService.CommentThreads.List([]string{"snippet,replies"}).
 			AllThreadsRelatedToChannelId(s.App.ChannelID).
@@ -85,18 +84,20 @@ func (s *CommentService) ProcessComments(ctx context.Context, opts AnswerOptions
 				foundUnanswered = true
 				if err := s.handleUnansweredComment(ctx, comment, commentPublishedAt, membersMap, opts, reader); err != nil {
 					log.Printf("Erro ao processar comentário %s: %v", comment.Id, err)
-					time.Sleep(15 * time.Second)
 				}
 			}
 		}
 
 		if !foundUnanswered {
 			if pageToken == "" {
-				fmt.Println("\nNão há mais comentários não respondidos em todas as páginas disponíveis.")
+				fmt.Println()
+				ui.Info("Não há mais comentários não respondidos em todas as páginas disponíveis.")
 				return nil
 			} else {
-				fmt.Println("\nNão há mais comentários não respondidos neste lote.")
-				fmt.Printf("Pressione Enter para buscar o próximo lote de comentários, ou digite 'Q' para sair: ")
+				fmt.Println()
+				ui.Info("Não há mais comentários não respondidos neste lote.")
+				ui.PrintDivider()
+				fmt.Printf("\n  %s→ Pressione Enter para buscar o próximo lote, ou digite Q para sair: %s", ui.FgBrightCyan+ui.Bold, ui.Reset)
 				input, _ := reader.ReadString('\n')
 				input = strings.TrimSpace(strings.ToUpper(input))
 				if input == "Q" {
@@ -109,10 +110,6 @@ func (s *CommentService) ProcessComments(ctx context.Context, opts AnswerOptions
 
 func (s *CommentService) handleUnansweredComment(ctx context.Context, comment *youtube.Comment, publishedAt time.Time, membersMap map[string]bool, opts AnswerOptions, reader *bufio.Reader) error {
 	isMember := membersMap["https://www.youtube.com/channel/"+comment.Snippet.AuthorChannelId.Value]
-	authorPrefix := ""
-	if isMember {
-		authorPrefix = "⭐ MEMBRO ⭐ "
-	}
 
 	videoCall := s.App.YTService.Videos.List([]string{"snippet"}).Id(comment.Snippet.VideoId)
 	videoResp, err := videoCall.Do()
@@ -123,26 +120,34 @@ func (s *CommentService) handleUnansweredComment(ctx context.Context, comment *y
 		videoDescription = videoResp.Items[0].Snippet.Description
 	}
 
-	fmt.Print("\033[H\033[2J")
-	fmt.Println("------------------------------------------------------------------")
-	fmt.Println("             Novo comentário não respondido encontrado            ")
-	fmt.Println("------------------------------------------------------------------")
-	fmt.Println("")
+	// ── Header ────────────────────────────────────────────────────────────────
+	ui.ClearScreen()
+	ui.PrintHeader("Novo comentário não respondido encontrado")
 
+	// ── Comment Details ───────────────────────────────────────────────────────
 	brTime := publishedAt.In(time.FixedZone("BRT", -3*60*60))
-	fmt.Println("# Detalhes do comentário")
-	fmt.Printf("Título do vídeo: %s\n", videoTitle)
-	fmt.Printf("%sAutor: %s (Publicado em: %s)\n", authorPrefix, comment.Snippet.AuthorDisplayName, brTime.Format("02/01/2006 às 15:04"))
-	fmt.Printf("Comentário: %s\n\n", comment.Snippet.TextDisplay)
 
-	fmt.Println("# Análise do comentário")
+	authorLine := comment.Snippet.AuthorDisplayName
+	if isMember {
+		authorLine = ui.MemberBadge() + authorLine
+	}
+
+	ui.PrintCommentMeta(videoTitle, authorLine, brTime.Format("02/01/2006 às 15:04"))
+	ui.PrintComment(comment.Snippet.TextDisplay)
+
+	// ── Sentiment Analysis ────────────────────────────────────────────────────
+	ui.PrintSectionTitle("Análise do comentário")
+
 	sentiment, err := llm.AnalyzeComment(ctx, comment.Snippet.TextOriginal, s.App.GeminiClient)
 	if err != nil {
 		return fmt.Errorf("erro na análise de sentimento: %w", err)
 	}
-	fmt.Printf("Análise de sentimento: %s\n", sentiment.Sentimento)
-	fmt.Printf("Nota de entendimento: %d\n", sentiment.Nota)
-	fmt.Printf("Tema: %s\n\n", sentiment.Tema)
+
+	fmt.Printf("  %s  %s  %s\n",
+		ui.SentimentBadge(sentiment.Sentimento),
+		ui.NotaBadge(sentiment.Nota),
+		ui.ThemeBadge(sentiment.Tema),
+	)
 
 	var answer, suggestedAnswer, input string
 	if opts.ManualMode {
@@ -151,66 +156,61 @@ func (s *CommentService) handleUnansweredComment(ctx context.Context, comment *y
 
 	pastAnswers, err := database.GetPreviousAnswersByContext(sentiment.Tema, sentiment.Sentimento, 5)
 	if err != nil {
-		log.Printf("⚠️ Erro ao buscar histórico de RAG: %v", err)
+		log.Printf("Erro ao buscar histórico de RAG: %v", err)
 	}
 
 	authorHistory, err := database.GetLastComments(comment.Snippet.AuthorDisplayName, 10)
 	if err != nil {
-		log.Printf("⚠️ Erro ao buscar histórico de comentários: %v", err)
+		log.Printf("Erro ao buscar histórico de comentários: %v", err)
 	}
 
 	shouldSuggestAnswer := !opts.ManualMode && sentiment.Sentimento != "negativo" && sentiment.Nota >= 3
 	if shouldSuggestAnswer {
 		var videoTranscript string
+		transcriptLen := 0 // 0 = not fetched, -1 = error, >0 = char count
 		if opts.TranscriptionMode && sentiment.Tema != "Saudação/Agradecimento" {
-			fmt.Println("# Transcrição do vídeo")
-			fmt.Printf("Buscando transcrição do vídeo...\n")
 			videoTranscript, err = yt.GetVideoTranscription(ctx, s.App.YTService, comment.Snippet.VideoId)
 			if err != nil {
-				log.Printf("⚠️ Não foi possível obter a transcrição: %v", err)
+				log.Printf("Não foi possível obter a transcrição: %v", err)
+				transcriptLen = -1
 			} else {
-				fmt.Printf("✅ Transcrição obtida com sucesso (%d caracteres)\n\n", len(videoTranscript))
+				transcriptLen = len(videoTranscript)
 			}
 		}
 
-		fmt.Println("# RAG")
-		if len(authorHistory) > 0 {
-			fmt.Printf("✅ %d mensagens encontradas no histórico de interações anteriores com esta pessoa.\n", len(authorHistory))
-		}
-		if len(pastAnswers) > 0 {
-			fmt.Printf("✅ %d respostas similares encontradas no histórico.\n", len(pastAnswers))
-		}
+		ui.PrintSectionTitle("Contexto")
+		ui.PrintContextBar(transcriptLen, len(authorHistory), len(pastAnswers))
 
-		fmt.Println("\n# Sugestão de resposta")
+		ui.PrintSectionTitle("Sugestão de resposta")
 		suggestedAnswer, err = llm.SuggestAnswer(ctx, sentiment.Sentimento == "negativo", comment.Snippet.TextOriginal, videoTitle, videoDescription, videoTranscript, authorHistory, isMember, pastAnswers, s.App.GeminiClient)
 		if err != nil {
 			return fmt.Errorf("erro ao sugerir resposta: %w", err)
 		}
 
 		if suggestedAnswer == "" {
-			fmt.Println("⚠️ Não foi possível gerar uma sugestão de resposta.")
+			ui.Warning("Não foi possível gerar uma sugestão de resposta.")
 			return nil
 		}
 
 		answer = strings.TrimSpace(suggestedAnswer)
-		fmt.Printf("%s\n", answer)
+		ui.PrintSuggestedAnswer(answer)
 
 		if sentiment.Sentimento == "positivo" && sentiment.Nota >= 4 && opts.AutoAnswerMode {
 			input = "S"
 			time.Sleep(2 * time.Second)
-			fmt.Println("✅ Resposta sugerida será publicada automaticamente.")
+			ui.Success("Resposta sugerida será publicada automaticamente.")
 			time.Sleep(3 * time.Second)
 		}
 
 		if input == "" {
-			fmt.Printf("\nDeseja publicar esta resposta? (S/N/E/Q para sair): ")
+			ui.PrintActionMenu()
 			input, _ = reader.ReadString('\n')
 			input = strings.TrimSpace(strings.ToUpper(input))
 		}
 	}
 
 	if suggestedAnswer == "" && input == "" {
-		fmt.Println("⚠️ Optei por não gerar uma resposta automática.")
+		ui.Warning("Optei por não gerar uma resposta automática.")
 		input = "E"
 	}
 
@@ -218,18 +218,18 @@ func (s *CommentService) handleUnansweredComment(ctx context.Context, comment *y
 	case "S":
 		return s.publishAndSave(comment, &sentiment, answer, false)
 	case "E":
-		fmt.Print("Digite a resposta que deseja publicar:\n> ")
+		ui.PrintEditPrompt()
 		editedAnswer, _ := reader.ReadString('\n')
 		editedAnswer = strings.TrimSpace(editedAnswer)
 		if editedAnswer == "" {
-			fmt.Println("🚫 Resposta vazia.")
+			ui.Warning("Resposta vazia — comentário ignorado.")
 			return nil
 		}
 		return s.publishAndSave(comment, &sentiment, editedAnswer, true)
 	case "Q":
 		os.Exit(0)
 	default:
-		fmt.Println("🚫 Resposta não publicada.")
+		ui.Warning("Resposta não publicada.")
 	}
 	return nil
 }
@@ -241,10 +241,10 @@ func (s *CommentService) publishAndSave(comment *youtube.Comment, sentiment *mod
 	}
 
 	if err := database.SaveComment(comment, sentiment.Sentimento, sentiment.Nota, sentiment.Tema, answer, userAnswered); err != nil {
-		log.Printf("⚠️ Erro ao salvar no banco: %v", err)
-		fmt.Println("✅ Resposta publicada, mas houve erro ao salvar no histórico local!")
+		log.Printf("Erro ao salvar no banco: %v", err)
+		ui.Warning("Resposta publicada, mas houve erro ao salvar no histórico local!")
 	} else {
-		fmt.Println("✅ Resposta publicada e salva com sucesso!")
+		ui.Success("Resposta publicada e salva com sucesso!")
 	}
 	return nil
 }
@@ -253,7 +253,7 @@ func (s *CommentService) loadMembersFromCSV(filename string) (map[string]bool, e
 	file, err := os.Open(filename)
 	if err != nil {
 		if os.IsNotExist(err) {
-			fmt.Printf("Aviso: Arquivo de membros '%s' não encontrado.\n", filename)
+			ui.Warning(fmt.Sprintf("Arquivo de membros '%s' não encontrado.", filename))
 			return make(map[string]bool), nil
 		}
 		return nil, err
@@ -262,7 +262,7 @@ func (s *CommentService) loadMembersFromCSV(filename string) (map[string]bool, e
 
 	if fileInfo, err := file.Stat(); err == nil {
 		if time.Since(fileInfo.ModTime()) > 10*24*time.Hour {
-			fmt.Printf("ATENÇÃO: Arquivo de membros desatualizado.\n")
+			ui.Warning("Arquivo de membros desatualizado (mais de 10 dias).")
 		}
 	}
 
