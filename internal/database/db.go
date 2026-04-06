@@ -2,6 +2,7 @@ package database
 
 import (
 	"database/sql"
+	"os"
 	"time"
 
 	"answer-comments/internal/models"
@@ -28,7 +29,11 @@ var db *sql.DB
 // InitDB initializes the SQLite database connection and creates tables if needed
 func InitDB() error {
 	var err error
-	db, err = sql.Open("sqlite3", "comments.db")
+	dbPath := os.Getenv("DATABASE_FILE")
+	if dbPath == "" {
+		dbPath = "data/comments.db"
+	}
+	db, err = sql.Open("sqlite3", dbPath)
 	if err != nil {
 		return err
 	}

@@ -16,15 +16,12 @@ answer-comments
 *.swp
 
 # Credentials and tokens
-client_secret.json
-token.json
-
-# members file
-members.csv
-
-# Database and logs
-comment_log.csv
-comments.db*
+config.env
+data/*
+!data/.gitkeep
 
 # Vendor and build directories (if any)
 vendor/
+
+# Editor temp files
+answer-comments.code-workspace
