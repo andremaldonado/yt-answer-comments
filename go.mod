@@ -8,6 +8,10 @@ require (
 	google.golang.org/genai v1.28.0
 )
 
+require github.com/joho/godotenv v1.5.1
+
+require golang.org/x/term v0.41.0 // indirect
+
 require (
 	cloud.google.com/go v0.116.0 // indirect
 	cloud.google.com/go/auth v0.17.0 // indirect
