@@ -199,7 +199,7 @@ func (s *CommentService) handleUnansweredComment(ctx context.Context, comment *y
 			input = "S"
 			time.Sleep(2 * time.Second)
 			ui.Success("Resposta sugerida será publicada automaticamente.")
-			time.Sleep(3 * time.Second)
+			time.Sleep(3 * time.Minute)
 		}
 
 		if input == "" {
