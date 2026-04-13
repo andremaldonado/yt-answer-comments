@@ -5,7 +5,14 @@
 
 ## Próximos Passos
 
-1. **Painel lateral no terminal** — *Alta*
+1. **Countdown antes de publicar no auto-answer mode** — *Alta*
+   - **Contexto:** No modo auto-answer, o comentário é publicado automaticamente após um delay (atualmente 3 min). O usuário precisa ver um contador regressivo para saber quando vai publicar e ter chance de cancelar — também reduz risco de rate-limit/bloqueio do YT por ações rápidas demais.
+   - **Subtarefas:**
+     - [ ] Criar `ui.Timer` (ou similar) que exibe countdown atualizado a cada segundo (`Publicando em 2:47...`)
+     - [ ] Integrar no fluxo de auto-answer antes do publish
+     - [ ] Permitir cancelamento durante o countdown (ex: `Ctrl+C`)
+
+2. **Painel lateral no terminal** — *Alta*
    - **Contexto:** A tela atual mistura informações primárias e secundárias. A ideia é separar: tela principal com o que importa para a decisão (autor, comentário, sugestão, ações) e painel lateral com o contexto de suporte (título do vídeo, sentimento/nota/tema, RAG).
    - **Subtarefas:**
      - [ ] Detectar largura do terminal e dividir em duas colunas
