@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"golang.org/x/term"
 )
@@ -312,6 +313,47 @@ func PrintContextBar(transcriptLen, authorCount, pastCount int) {
 	}
 
 	fmt.Println("  " + transcriptPart + sep + authorPart + sep + pastPart)
+}
+
+// ── Countdown ─────────────────────────────────────────────────────────────────
+
+// Countdown exibe um contador regressivo inline, atualizando a cada segundo.
+// Retorna true se o tempo esgotou normalmente, false se o usuário cancelou (Enter).
+func Countdown(d time.Duration, cancelCh <-chan struct{}) bool {
+	remaining := d
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+
+	for {
+		mins := int(remaining.Minutes())
+		secs := int(remaining.Seconds()) % 60
+		label := fmt.Sprintf(" ⏱  Publicando em %d:%02d... [Enter para editar] ", mins, secs)
+
+		// === BLINK_ALERT: pisca fundo vermelho no último minuto; remova este bloco se não quiser ===
+		if remaining <= time.Minute {
+			blinkOn := (int(remaining.Seconds()) % 2) == 1
+			if blinkOn {
+				label = BgRed + Bold + label + Reset
+			} else {
+				label = Bold + label + Reset
+			}
+		}
+		// === fim BLINK_ALERT ===
+
+		fmt.Printf("\r  %s   ", label)
+
+		select {
+		case <-cancelCh:
+			fmt.Println()
+			return false
+		case <-ticker.C:
+			remaining -= time.Second
+			if remaining <= 0 {
+				fmt.Println()
+				return true
+			}
+		}
+	}
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

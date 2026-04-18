@@ -8,8 +8,8 @@ As skills abaixo estão sempre ativas — sem trigger necessário.
 
 Mantém um runbook em `.github/napkin.md`. A cada sessão:
 
-- Leia e curate antes de começar qualquer trabalho.
-- Re-priorize, mescle duplicatas, remova itens stale.
+- Leia antes de começar qualquer trabalho.
+- Re-priorize, mescle duplicatas, remova itens antigos.
 - Atualize durante o trabalho quando aprender algo reutilizável.
 - Formato: `[YYYY-MM-DD] Regra curta` + linha `Do instead: ação concreta`.
 - Máx. 10 itens por categoria; categorias ordenadas por prioridade decrescente.

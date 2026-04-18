@@ -8,6 +8,9 @@
 
 ## Execution & Validation (Highest Priority)
 
+- [2026-04-18] Atualizar backlog e napkin ao fim de cada tarefa — não só quando explicitamente pedido.
+  Do instead: ao marcar item como feito no backlog, revisar o napkin na mesma resposta.
+
 ## Shell & Command Reliability
 
 ## Domain Behavior Guardrails

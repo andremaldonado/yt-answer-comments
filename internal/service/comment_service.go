@@ -197,9 +197,17 @@ func (s *CommentService) handleUnansweredComment(ctx context.Context, comment *y
 
 		if sentiment.Sentimento == "positivo" && sentiment.Nota >= 4 && opts.AutoAnswerMode {
 			input = "S"
-			time.Sleep(2 * time.Second)
 			ui.Success("Resposta sugerida será publicada automaticamente.")
-			time.Sleep(3 * time.Minute)
+
+			cancelCh := make(chan struct{}, 1)
+			go func() {
+				reader.ReadString('\n') //nolint:errcheck
+				cancelCh <- struct{}{}
+			}()
+
+			if !ui.Countdown(3*time.Minute, cancelCh) {
+				input = "E"
+			}
 		}
 
 		if input == "" {

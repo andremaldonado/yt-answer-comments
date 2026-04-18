@@ -5,12 +5,19 @@
 
 ## Próximos Passos
 
-1. **Countdown antes de publicar no auto-answer mode** — *Alta*
-   - **Contexto:** No modo auto-answer, o comentário é publicado automaticamente após um delay (atualmente 3 min). O usuário precisa ver um contador regressivo para saber quando vai publicar e ter chance de cancelar — também reduz risco de rate-limit/bloqueio do YT por ações rápidas demais.
+1. **[BUG] Goroutine vazada do Countdown consome stdin no comentário seguinte** — *Alta*
+   - **Contexto:** Quando o countdown expira normalmente (auto-publish), a goroutine que lê stdin para cancelar não é encerrada. No próximo comentário, ela consome o input do menu de ações, travando o fluxo.
    - **Subtarefas:**
-     - [ ] Criar `ui.Timer` (ou similar) que exibe countdown atualizado a cada segundo (`Publicando em 2:47...`)
-     - [ ] Integrar no fluxo de auto-answer antes do publish
-     - [ ] Permitir cancelamento durante o countdown (ex: `Ctrl+C`)
+     - [ ] Mover leitura de stdin para dentro de `ui.Countdown`, com `done` channel para cleanup
+     - [ ] Ajustar assinatura: `Countdown(d, *bufio.Reader) bool` — true=cancelado, false=expirou
+     - [ ] Atualizar chamada em `comment_service.go`
+
+2. **Pausa nos comentários sem resposta automática (modo auto)** — *Alta*
+   - **Contexto:** No modo `-a`, comentários que não atingem o threshold de auto-publish (positivo + nota >= 4) não têm pausa — o fluxo vai direto pro menu de edição/ações sem dar tempo de ler o comentário. O usuário perde comentários sem perceber.
+   - **Subtarefas:**
+     - [ ] Mapear todos os paths em `handleUnansweredComment` que não resultam em auto-publish quando `opts.AutoAnswerMode == true`
+     - [ ] Adicionar `ui.Countdown` (~30s) antes do prompt de ação nesses paths — Enter pula a espera e vai pro menu
+     - [ ] Exibir no countdown o que faltou pro threshold (ex: "nota 3 — mínimo 4")
 
 2. **Painel lateral no terminal** — *Alta*
    - **Contexto:** A tela atual mistura informações primárias e secundárias. A ideia é separar: tela principal com o que importa para a decisão (autor, comentário, sugestão, ações) e painel lateral com o contexto de suporte (título do vídeo, sentimento/nota/tema, RAG).
@@ -20,7 +27,7 @@
      - [ ] Coluna lateral (direita, ~40%): título do vídeo, badges de sentimento/nota/tema, barra de contexto RAG
      - [ ] Garantir fallback gracioso para terminais estreitos (< 100 cols): layout de coluna única
 
-2. **Atualizar README** — *Baixa*
+3. **Atualizar README** — *Baixa*
    - **Contexto:** A seção de estrutura do projeto está desatualizada — não reflete os pacotes `internal/ui`, `internal/service` e `internal/app` adicionados nas últimas refatorações.
    - **Subtarefas:**
      - [ ] Atualizar árvore de diretórios
@@ -28,6 +35,7 @@
 
 ## Feito
 
+- [2026-04-18] **Countdown antes de publicar no auto-answer mode** — `ui.Countdown` com ticker + goroutine lendo stdin; Enter cai no fluxo de edição (`input = "E"`); últimos 60s piscam fundo vermelho (bloco `BLINK_ALERT` isolado para fácil remoção).
 - [2026-04-06] **Refatoração da UI do terminal** — criação do pacote `internal/ui` com sistema completo de display ANSI (badges, headers, barras compactas de metadados e contexto, full-width dinâmico via `term.GetSize`); `comment_service.go` e `main.go` migrados dos `fmt.Printf` soltos para o novo pacote.
 
 ## Bloqueado
