@@ -15,4 +15,7 @@
 
 ## Domain Behavior Guardrails
 
+- [2026-04-18] Goroutines que leem stdin para cancelar timers vazam quando o timer expira — stdin não é cancelável.
+  Do instead: mover a leitura para dentro da função do timer com `done` channel; usar `select` para descartar o resultado quando não é mais necessário.
+
 ## User Directives

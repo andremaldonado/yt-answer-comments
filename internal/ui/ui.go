@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"bufio"
 	"fmt"
 	"strings"
 	"time"
@@ -319,7 +320,19 @@ func PrintContextBar(transcriptLen, authorCount, pastCount int) {
 
 // Countdown exibe um contador regressivo inline, atualizando a cada segundo.
 // Retorna true se o tempo esgotou normalmente, false se o usuário cancelou (Enter).
-func Countdown(d time.Duration, cancelCh <-chan struct{}) bool {
+func Countdown(d time.Duration, r *bufio.Reader) bool {
+	lineCh := make(chan struct{}, 1)
+	done := make(chan struct{})
+	defer close(done)
+
+	go func() {
+		r.ReadString('\n') //nolint:errcheck
+		select {
+		case lineCh <- struct{}{}:
+		case <-done:
+		}
+	}()
+
 	remaining := d
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
@@ -343,7 +356,7 @@ func Countdown(d time.Duration, cancelCh <-chan struct{}) bool {
 		fmt.Printf("\r  %s   ", label)
 
 		select {
-		case <-cancelCh:
+		case <-lineCh:
 			fmt.Println()
 			return false
 		case <-ticker.C:

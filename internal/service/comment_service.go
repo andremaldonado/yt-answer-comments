@@ -199,13 +199,7 @@ func (s *CommentService) handleUnansweredComment(ctx context.Context, comment *y
 			input = "S"
 			ui.Success("Resposta sugerida será publicada automaticamente.")
 
-			cancelCh := make(chan struct{}, 1)
-			go func() {
-				reader.ReadString('\n') //nolint:errcheck
-				cancelCh <- struct{}{}
-			}()
-
-			if !ui.Countdown(3*time.Minute, cancelCh) {
+			if !ui.Countdown(3*time.Minute, reader) {
 				input = "E"
 			}
 		}

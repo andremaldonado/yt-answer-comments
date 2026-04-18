@@ -5,14 +5,7 @@
 
 ## Próximos Passos
 
-1. **[BUG] Goroutine vazada do Countdown consome stdin no comentário seguinte** — *Alta*
-   - **Contexto:** Quando o countdown expira normalmente (auto-publish), a goroutine que lê stdin para cancelar não é encerrada. No próximo comentário, ela consome o input do menu de ações, travando o fluxo.
-   - **Subtarefas:**
-     - [ ] Mover leitura de stdin para dentro de `ui.Countdown`, com `done` channel para cleanup
-     - [ ] Ajustar assinatura: `Countdown(d, *bufio.Reader) bool` — true=cancelado, false=expirou
-     - [ ] Atualizar chamada em `comment_service.go`
-
-2. **Pausa nos comentários sem resposta automática (modo auto)** — *Alta*
+1. **Pausa nos comentários sem resposta automática (modo auto)** — *Alta*
    - **Contexto:** No modo `-a`, comentários que não atingem o threshold de auto-publish (positivo + nota >= 4) não têm pausa — o fluxo vai direto pro menu de edição/ações sem dar tempo de ler o comentário. O usuário perde comentários sem perceber.
    - **Subtarefas:**
      - [ ] Mapear todos os paths em `handleUnansweredComment` que não resultam em auto-publish quando `opts.AutoAnswerMode == true`
@@ -35,6 +28,7 @@
 
 ## Feito
 
+- [2026-04-18] **[BUG] Goroutine vazada do Countdown consome stdin no comentário seguinte** — leitura de stdin movida para dentro de `ui.Countdown` com `done` channel; goroutine interna descarta o resultado via `select` quando o timer expira, eliminando o vazamento.
 - [2026-04-18] **Countdown antes de publicar no auto-answer mode** — `ui.Countdown` com ticker + goroutine lendo stdin; Enter cai no fluxo de edição (`input = "E"`); últimos 60s piscam fundo vermelho (bloco `BLINK_ALERT` isolado para fácil remoção).
 - [2026-04-06] **Refatoração da UI do terminal** — criação do pacote `internal/ui` com sistema completo de display ANSI (badges, headers, barras compactas de metadados e contexto, full-width dinâmico via `term.GetSize`); `comment_service.go` e `main.go` migrados dos `fmt.Printf` soltos para o novo pacote.
 
