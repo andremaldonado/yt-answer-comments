@@ -1,7 +1,6 @@
 package ui
 
 import (
-	"bufio"
 	"fmt"
 	"strings"
 	"time"
@@ -319,20 +318,10 @@ func PrintContextBar(transcriptLen, authorCount, pastCount int) {
 // ── Countdown ─────────────────────────────────────────────────────────────────
 
 // Countdown exibe um contador regressivo inline, atualizando a cada segundo.
+// msg é o texto exibido antes do tempo (ex: "Publicando em" ou "Nota 3 — revisando").
+// stdinCh é o channel compartilhado de leitura de stdin (ver ProcessComments).
 // Retorna true se o tempo esgotou normalmente, false se o usuário cancelou (Enter).
-func Countdown(d time.Duration, r *bufio.Reader) bool {
-	lineCh := make(chan struct{}, 1)
-	done := make(chan struct{})
-	defer close(done)
-
-	go func() {
-		r.ReadString('\n') //nolint:errcheck
-		select {
-		case lineCh <- struct{}{}:
-		case <-done:
-		}
-	}()
-
+func Countdown(d time.Duration, stdinCh <-chan string, msg string) bool {
 	remaining := d
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
@@ -340,7 +329,7 @@ func Countdown(d time.Duration, r *bufio.Reader) bool {
 	for {
 		mins := int(remaining.Minutes())
 		secs := int(remaining.Seconds()) % 60
-		label := fmt.Sprintf(" ⏱  Publicando em %d:%02d... [Enter para editar] ", mins, secs)
+		label := fmt.Sprintf(" ⏱  %s %d:%02d... [Enter para editar] ", msg, mins, secs)
 
 		// === BLINK_ALERT: pisca fundo vermelho no último minuto; remova este bloco se não quiser ===
 		if remaining <= time.Minute {
@@ -356,7 +345,7 @@ func Countdown(d time.Duration, r *bufio.Reader) bool {
 		fmt.Printf("\r  %s   ", label)
 
 		select {
-		case <-lineCh:
+		case <-stdinCh:
 			fmt.Println()
 			return false
 		case <-ticker.C:

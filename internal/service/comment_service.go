@@ -45,9 +45,27 @@ func (s *CommentService) ProcessComments(ctx context.Context, opts AnswerOptions
 	reader := bufio.NewReader(os.Stdin)
 	var pageToken string
 
+	// Goroutine permanente de leitura de stdin para AutoAnswerMode.
+	// Evita o goroutine leak que ocorria quando Countdown expirava e deixava
+	// uma goroutine bloqueada em ReadString, roubando Enters subsequentes.
+	var stdinCh chan string
+	if opts.AutoAnswerMode {
+		stdinCh = make(chan string, 1)
+		go func() {
+			for {
+				line, _ := reader.ReadString('\n')
+				stdinCh <- line
+			}
+		}()
+	}
+
 	fmt.Println()
 	fmt.Printf("  %s→ Pressione Enter para iniciar a verificação de comentários...%s ", ui.FgBrightCyan+ui.Bold, ui.Reset)
-	_, _ = reader.ReadString('\n')
+	if opts.AutoAnswerMode {
+		<-stdinCh
+	} else {
+		_, _ = reader.ReadString('\n')
+	}
 
 	for {
 		ui.PrintSearchingBanner()
@@ -82,7 +100,7 @@ func (s *CommentService) ProcessComments(ctx context.Context, opts AnswerOptions
 
 			if !isAnsweredByMe {
 				foundUnanswered = true
-				if err := s.handleUnansweredComment(ctx, comment, commentPublishedAt, membersMap, opts, reader); err != nil {
+				if err := s.handleUnansweredComment(ctx, comment, commentPublishedAt, membersMap, opts, reader, stdinCh); err != nil {
 					log.Printf("Erro ao processar comentário %s: %v", comment.Id, err)
 				}
 			}
@@ -108,7 +126,7 @@ func (s *CommentService) ProcessComments(ctx context.Context, opts AnswerOptions
 	}
 }
 
-func (s *CommentService) handleUnansweredComment(ctx context.Context, comment *youtube.Comment, publishedAt time.Time, membersMap map[string]bool, opts AnswerOptions, reader *bufio.Reader) error {
+func (s *CommentService) handleUnansweredComment(ctx context.Context, comment *youtube.Comment, publishedAt time.Time, membersMap map[string]bool, opts AnswerOptions, reader *bufio.Reader, stdinCh chan string) error {
 	isMember := membersMap["https://www.youtube.com/channel/"+comment.Snippet.AuthorChannelId.Value]
 
 	videoCall := s.App.YTService.Videos.List([]string{"snippet"}).Id(comment.Snippet.VideoId)
@@ -183,7 +201,11 @@ func (s *CommentService) handleUnansweredComment(ctx context.Context, comment *y
 
 		ui.PrintSectionTitle("Sugestão de resposta")
 		suggestedAnswer, err = llm.SuggestAnswer(ctx, sentiment.Sentimento == "negativo", comment.Snippet.TextOriginal, videoTitle, videoDescription, videoTranscript, authorHistory, isMember, pastAnswers, s.App.GeminiClient)
-		if err != nil {
+
+		if err != nil { //TODO: fazer o if do auto-answer aqui para sair da app quando der erro
+			if opts.AutoAnswerMode {
+				os.Exit(-1)
+			}
 			return fmt.Errorf("erro ao sugerir resposta: %w", err)
 		}
 
@@ -199,21 +221,37 @@ func (s *CommentService) handleUnansweredComment(ctx context.Context, comment *y
 			input = "S"
 			ui.Success("Resposta sugerida será publicada automaticamente.")
 
-			if !ui.Countdown(3*time.Minute, reader) {
+			if !ui.Countdown(3*time.Minute, stdinCh, "Publicando em") {
 				input = "E"
 			}
 		}
 
+		// Se não tem um opção do que fazer
 		if input == "" {
-			ui.PrintActionMenu()
-			input, _ = reader.ReadString('\n')
-			input = strings.TrimSpace(strings.ToUpper(input))
+			// E está no modo auto resposta, mostra o countdown. Se o usuário não fizar nada, pula, senão deixa Editar
+			if opts.AutoAnswerMode && !ui.Countdown(3*time.Minute, stdinCh, "Pulando comentário em") {
+				input = "E"
+			}
+			// Se não está no modo autoresposta, mostra o menu de ações
+			if !opts.AutoAnswerMode {
+				ui.PrintActionMenu()
+				input, _ = reader.ReadString('\n')
+				input = strings.TrimSpace(strings.ToUpper(input))
+			}
 		}
 	}
 
+	// Se ainda não tem uma mensagem sugerida
 	if suggestedAnswer == "" && input == "" {
-		ui.Warning("Optei por não gerar uma resposta automática.")
-		input = "E"
+		// E está no modo auto-resposta, mostra o countdown. Se o usuário não fizer nada, pula, senão deixa Editar
+		if opts.AutoAnswerMode && !ui.Countdown(3*time.Minute, stdinCh, thresholdReason(sentiment)) {
+			input = "E"
+		}
+		// Se nao está no modo auto resposta, só mostra que não tem sugestão e manda editar
+		if !opts.AutoAnswerMode {
+			ui.Warning("Optei por não gerar uma resposta automática.")
+			input = "E"
+		}
 	}
 
 	switch input {
@@ -221,8 +259,13 @@ func (s *CommentService) handleUnansweredComment(ctx context.Context, comment *y
 		return s.publishAndSave(comment, &sentiment, answer, false)
 	case "E":
 		ui.PrintEditPrompt()
-		editedAnswer, _ := reader.ReadString('\n')
-		editedAnswer = strings.TrimSpace(editedAnswer)
+		var editedAnswer string
+		if opts.AutoAnswerMode {
+			editedAnswer = strings.TrimSpace(<-stdinCh)
+		} else {
+			line, _ := reader.ReadString('\n')
+			editedAnswer = strings.TrimSpace(line)
+		}
 		if editedAnswer == "" {
 			ui.Warning("Resposta vazia — comentário ignorado.")
 			return nil
@@ -233,7 +276,15 @@ func (s *CommentService) handleUnansweredComment(ctx context.Context, comment *y
 	default:
 		ui.Warning("Resposta não publicada.")
 	}
+
 	return nil
+}
+
+func thresholdReason(s models.SentimentAnalysis) string {
+	if s.Sentimento != "positivo" {
+		return fmt.Sprintf("Sentimento %s —", s.Sentimento)
+	}
+	return fmt.Sprintf("Nota %d (mínimo 4) —", s.Nota)
 }
 
 func (s *CommentService) publishAndSave(comment *youtube.Comment, sentiment *models.SentimentAnalysis, answer string, userAnswered bool) error {
