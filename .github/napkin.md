@@ -16,6 +16,9 @@
 
 ## Shell & Command Reliability
 
+- [2026-04-19] Diagnóstico de bug sem dados leva à hipótese errada — a causa "stdin stale" foi assumida sem evidência e estava errada (era queda de rede).
+  Do instead: antes de propor fix, adicionar log nos pontos chave e analisar a evidência. Só então propor solução.
+
 ## Domain Behavior Guardrails
 
 - [2026-04-18] Goroutines bloqueadas em `bufio.Reader.ReadString` não podem ser canceladas — `done` channel não adianta porque a goroutine só chega no `select` depois que o I/O retornar.
