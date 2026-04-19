@@ -8,6 +8,7 @@ import (
 	"os"
 
 	"answer-comments/internal/app"
+	"answer-comments/internal/debuglog"
 	"answer-comments/internal/service"
 	"answer-comments/internal/ui"
 )
@@ -29,6 +30,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "  - members.csv (opcional): Lista de membros do canal\n\n")
 		fmt.Fprintf(os.Stderr, "EXEMPLOS:\n")
 		fmt.Fprintf(os.Stderr, "  answer-comments              # Modo padrão com sugestões da IA\n")
+		fmt.Fprintf(os.Stderr, "  answer-comments -d           # Modo de debug (salva arquivo de debug)\n")
 		fmt.Fprintf(os.Stderr, "  answer-comments -m           # Modo manual (sem sugestões)\n")
 		fmt.Fprintf(os.Stderr, "  answer-comments -a           # Modo automático (publica sem confirmação)\n")
 		fmt.Fprintf(os.Stderr, "  answer-comments -t           # Usa transcrição dos vídeos como contexto\n")
@@ -42,7 +44,16 @@ func main() {
 	flag.BoolVar(autoAnswerMode, "a", false, "Atalho para --auto")
 	transcriptionMode := flag.Bool("transcription", false, "Modo transcrição: usa a transcrição automática do vídeo como contexto para a LLM (exceto para comentários de Saudação/Agradecimento)")
 	flag.BoolVar(transcriptionMode, "t", false, "Atalho para --transcription")
+	debugMode := flag.Bool("debug", false, "Ativa logging de debug em debug.log (ou caminho configurado com --debug-log)")
+	flag.BoolVar(debugMode, "d", false, "Atalho para --debug")
+	debugLogPath := flag.String("debug-log", "debug.log", "Caminho do arquivo de log de debug (requer --debug)")
 	flag.Parse()
+
+	if *debugMode {
+		if err := debuglog.Init(*debugLogPath); err != nil {
+			log.Printf("Aviso: %v", err)
+		}
+	}
 
 	ui.ClearScreen()
 
@@ -54,6 +65,9 @@ func main() {
 	}
 	if *transcriptionMode {
 		ui.PrintModeBanner("🎙️", "Modo Transcrição Ativado", "A transcrição dos vídeos será usada como contexto para a LLM.", ui.FgBrightCyan)
+	}
+	if *debugMode {
+		ui.PrintModeBanner("⚠️", "Modo de Debug Ativado", "Arquivo de debug será salvo.", ui.FgBrightRed)
 	}
 
 	ctx := context.Background()

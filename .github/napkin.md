@@ -25,3 +25,9 @@
   Do instead: antes de propor mudança de fluxo, mapear todos os modos (Manual, AutoAnswer, padrão) e garantir que a mudança respeita o comportamento esperado de cada um.
 
 ## User Directives
+
+- [2026-04-18] Ao adicionar flag/feature, cobrir TODOS os pontos afetados na mesma entrega — exemplos de uso, help text, referências no README.
+  Do instead: antes de declarar pronto, varrer flag usage block, exemplos e help. Tratar como parte da mesma tarefa.
+
+- [2026-04-18] Não adicionar UI/banners/output visual que não foi pedido explicitamente.
+  Do instead: se um banner seria extensão natural, perguntar antes de implementar.

@@ -4,14 +4,17 @@ import (
 	"bufio"
 	"context"
 	"encoding/csv"
+	"errors"
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"strings"
 	"time"
 
 	"answer-comments/internal/app"
 	"answer-comments/internal/database"
+	"answer-comments/internal/debuglog"
 	"answer-comments/internal/llm"
 	"answer-comments/internal/models"
 	"answer-comments/internal/ui"
@@ -54,7 +57,9 @@ func (s *CommentService) ProcessComments(ctx context.Context, opts AnswerOptions
 		go func() {
 			for {
 				line, _ := reader.ReadString('\n')
+				debuglog.Log("[stdin] leu linha: %q", line)
 				stdinCh <- line
+				debuglog.Log("[stdin] entregue ao channel")
 			}
 		}()
 	}
@@ -101,6 +106,11 @@ func (s *CommentService) ProcessComments(ctx context.Context, opts AnswerOptions
 			if !isAnsweredByMe {
 				foundUnanswered = true
 				if err := s.handleUnansweredComment(ctx, comment, commentPublishedAt, membersMap, opts, reader, stdinCh); err != nil {
+					if isNetworkError(err) {
+						debuglog.Log("[network] erro de rede, abortando: %v", err)
+						log.Printf("Erro de rede — abortando: %v", err)
+						os.Exit(-1)
+					}
 					log.Printf("Erro ao processar comentário %s: %v", comment.Id, err)
 				}
 			}
@@ -127,6 +137,7 @@ func (s *CommentService) ProcessComments(ctx context.Context, opts AnswerOptions
 }
 
 func (s *CommentService) handleUnansweredComment(ctx context.Context, comment *youtube.Comment, publishedAt time.Time, membersMap map[string]bool, opts AnswerOptions, reader *bufio.Reader, stdinCh chan string) error {
+	debuglog.Log("[comment] início — id=%s autor=%q", comment.Id, comment.Snippet.AuthorDisplayName)
 	isMember := membersMap["https://www.youtube.com/channel/"+comment.Snippet.AuthorChannelId.Value]
 
 	videoCall := s.App.YTService.Videos.List([]string{"snippet"}).Id(comment.Snippet.VideoId)
@@ -183,6 +194,8 @@ func (s *CommentService) handleUnansweredComment(ctx context.Context, comment *y
 	}
 
 	shouldSuggestAnswer := !opts.ManualMode && sentiment.Sentimento != "negativo" && sentiment.Nota >= 3
+	debuglog.Log("[comment] sentimento=%s nota=%d tema=%q shouldSuggest=%v manualMode=%v autoMode=%v",
+		sentiment.Sentimento, sentiment.Nota, sentiment.Tema, shouldSuggestAnswer, opts.ManualMode, opts.AutoAnswerMode)
 	if shouldSuggestAnswer {
 		var videoTranscript string
 		transcriptLen := 0 // 0 = not fetched, -1 = error, >0 = char count
@@ -221,7 +234,10 @@ func (s *CommentService) handleUnansweredComment(ctx context.Context, comment *y
 			input = "S"
 			ui.Success("Resposta sugerida será publicada automaticamente.")
 
-			if !ui.Countdown(3*time.Minute, stdinCh, "Publicando em") {
+			debuglog.Log("[countdown] início — path=publish")
+			completed := ui.Countdown(3*time.Minute, stdinCh, "Publicando em")
+			debuglog.Log("[countdown] fim — completed=%v path=publish", completed)
+			if !completed {
 				input = "E"
 			}
 		}
@@ -229,8 +245,13 @@ func (s *CommentService) handleUnansweredComment(ctx context.Context, comment *y
 		// Se não tem um opção do que fazer
 		if input == "" {
 			// E está no modo auto resposta, mostra o countdown. Se o usuário não fizar nada, pula, senão deixa Editar
-			if opts.AutoAnswerMode && !ui.Countdown(3*time.Minute, stdinCh, "Pulando comentário em") {
-				input = "E"
+			if opts.AutoAnswerMode {
+				debuglog.Log("[countdown] início — path=skip-with-suggestion")
+				completed := ui.Countdown(3*time.Minute, stdinCh, "Pulando comentário em")
+				debuglog.Log("[countdown] fim — completed=%v path=skip-with-suggestion", completed)
+				if !completed {
+					input = "E"
+				}
 			}
 			// Se não está no modo autoresposta, mostra o menu de ações
 			if !opts.AutoAnswerMode {
@@ -244,8 +265,13 @@ func (s *CommentService) handleUnansweredComment(ctx context.Context, comment *y
 	// Se ainda não tem uma mensagem sugerida
 	if suggestedAnswer == "" && input == "" {
 		// E está no modo auto-resposta, mostra o countdown. Se o usuário não fizer nada, pula, senão deixa Editar
-		if opts.AutoAnswerMode && !ui.Countdown(3*time.Minute, stdinCh, thresholdReason(sentiment)) {
-			input = "E"
+		if opts.AutoAnswerMode {
+			debuglog.Log("[countdown] início — path=threshold reason=%q", thresholdReason(sentiment))
+			completed := ui.Countdown(3*time.Minute, stdinCh, thresholdReason(sentiment))
+			debuglog.Log("[countdown] fim — completed=%v path=threshold", completed)
+			if !completed {
+				input = "E"
+			}
 		}
 		// Se nao está no modo auto resposta, só mostra que não tem sugestão e manda editar
 		if !opts.AutoAnswerMode {
@@ -254,6 +280,7 @@ func (s *CommentService) handleUnansweredComment(ctx context.Context, comment *y
 		}
 	}
 
+	debuglog.Log("[comment] input final=%q antes do switch", input)
 	switch input {
 	case "S":
 		return s.publishAndSave(comment, &sentiment, answer, false)
@@ -278,6 +305,11 @@ func (s *CommentService) handleUnansweredComment(ctx context.Context, comment *y
 	}
 
 	return nil
+}
+
+func isNetworkError(err error) bool {
+	var netErr net.Error
+	return errors.As(err, &netErr)
 }
 
 func thresholdReason(s models.SentimentAnalysis) string {

@@ -5,6 +5,9 @@ answer-comments
 *.so
 *.dylib
 
+# Logs
+*.log
+
 # Output from go test
 *.test
 

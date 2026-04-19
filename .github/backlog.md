@@ -2,8 +2,7 @@
 
 ## Em Andamento
 
-1. **[BUG] Enter não interrompe Countdown no AutoAnswerMode** — goroutine leak de countdowns expirados; fix: single stdin reader permanente via `chan string`.
-   - **[SUB-BUG] Alguns comentários são pulados instantaneamente** — sem countdown visível, sem publicação. Causa ainda não investigada.
+1. **[BUG] Comentários pulados silenciosamente em queda de rede** — outer loop continuava após `net.Error`. Fix implementado (`isNetworkError` + `os.Exit(-1)`), aguardando validação em produção.
 
 ## Próximos Passos
 
