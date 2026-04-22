@@ -126,8 +126,15 @@ func (s *CommentService) ProcessComments(ctx context.Context, opts AnswerOptions
 				ui.Info("Não há mais comentários não respondidos neste lote.")
 				ui.PrintDivider()
 				fmt.Printf("\n  %s→ Pressione Enter para buscar o próximo lote, ou digite Q para sair: %s", ui.FgBrightCyan+ui.Bold, ui.Reset)
-				input, _ := reader.ReadString('\n')
-				input = strings.TrimSpace(strings.ToUpper(input))
+				debuglog.Log("[próximo-lote] aguardando input autoMode=%v", opts.AutoAnswerMode)
+				var input string
+				if opts.AutoAnswerMode {
+					input = strings.TrimSpace(strings.ToUpper(<-stdinCh))
+				} else {
+					line, _ := reader.ReadString('\n')
+					input = strings.TrimSpace(strings.ToUpper(line))
+				}
+				debuglog.Log("[próximo-lote] input=%q", input)
 				if input == "Q" {
 					return nil
 				}

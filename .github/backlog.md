@@ -2,8 +2,6 @@
 
 ## Em Andamento
 
-1. **[BUG] Comentários pulados silenciosamente em queda de rede** — outer loop continuava após `net.Error`. Fix implementado (`isNetworkError` + `os.Exit(-1)`), aguardando validação em produção.
-
 ## Próximos Passos
 
 1. **Painel lateral no terminal** — *Alta*
@@ -22,6 +20,8 @@
 
 ## Feito
 
+- [2026-04-20] **[BUG] Comentários pulados silenciosamente em queda de rede** — `isNetworkError` + `os.Exit(-1)` no outer loop.
+- [2026-04-20] **[BUG] Double Enter no prompt de próximo lote (AutoAnswerMode)** — race condition entre goroutine de stdin e `reader.ReadString`; prompt agora lê de `stdinCh` em AutoAnswerMode.
 - [2026-04-18] **Pausa nos comentários sem auto-publish (modo `-a`)** — `ui.Countdown(30s)` adicionado antes do menu de ações quando threshold não é atingido (path `shouldSuggestAnswer` e path `suggestedAnswer == ""`); `Countdown` passou a aceitar `msg string` para exibir o motivo (ex: "Nota 3 (mínimo 4) —").
 - [2026-04-18] **[BUG] Goroutine vazada do Countdown consome stdin no comentário seguinte** — leitura de stdin movida para dentro de `ui.Countdown` com `done` channel; goroutine interna descarta o resultado via `select` quando o timer expira, eliminando o vazamento.
 - [2026-04-18] **Countdown antes de publicar no auto-answer mode** — `ui.Countdown` com ticker + goroutine lendo stdin; Enter cai no fluxo de edição (`input = "E"`); últimos 60s piscam fundo vermelho (bloco `BLINK_ALERT` isolado para fácil remoção).
