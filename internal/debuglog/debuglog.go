@@ -2,6 +2,7 @@ package debuglog
 
 import (
 	"fmt"
+	"io"
 	"log"
 	"os"
 )
@@ -19,6 +20,7 @@ func Init(path string) error {
 		return fmt.Errorf("debuglog: não foi possível abrir %s: %w", path, err)
 	}
 	logger = log.New(f, "", log.Ldate|log.Ltime|log.Lmicroseconds)
+	log.SetOutput(io.MultiWriter(os.Stderr, f))
 	logger.Println("=== debug session start ===")
 	return nil
 }
