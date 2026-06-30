@@ -1,15 +1,15 @@
 # answer-comments
 
-Ferramenta CLI para gerar e (opcionalmente) publicar respostas a comentários do seu canal YouTube usando o modelo Gemini (via `google.golang.org/genai`) e a YouTube Data API v3.
+Ferramenta CLI para gerar e (opcionalmente) publicar respostas a comentários do seu canal YouTube usando DeepSeek (OpenAI-compatible API) e a YouTube Data API v3.
 
-O programa busca comentários não respondidos do canal autenticado, gera uma sugestão de resposta com o LLM (Gemini) e pergunta interativamente se você deseja publicar a resposta.
+O programa busca comentários não respondidos do canal autenticado, gera uma sugestão de resposta com o LLM (DeepSeek) e pergunta interativamente se você deseja publicar a resposta.
 
 ## Requisitos
 
 - Go 1.25.1 (conforme `go.mod`)
 - Conta Google com um canal YouTube
 - Credenciais OAuth 2.0 (arquivo `client_secret.json`) configuradas na Google Cloud Console para o uso da DataAPI V3 do YouTube
-- Variável de ambiente `GEMINI_API_KEY` com a chave da API usada pelo pacote `google.golang.org/genai`
+- Variável de ambiente `LLM_API_KEY` com a chave da API DeepSeek
 
 ## Estrutura do projeto
 
@@ -21,7 +21,7 @@ internal/
   database/
     db.go          # gerenciamento de banco de dados SQLite
   llm/
-    llm.go         # interação com a API do Gemini
+    llm.go         # interação com a API do DeepSeek
   models/
     models.go      # estruturas de dados compartilhadas
   youtube/
@@ -42,14 +42,14 @@ internal/
 
 Observação: o programa usa o escopo `youtube.YoutubeForceSslScope` (acesso para publicar comentários em nome do canal autenticado)
 
-## Obtendo a GEMINI_API_KEY
+## Obtendo a LLM_API_KEY
 
-Obtenha a chave da API compatível com o cliente `google.golang.org/genai` (Gemini). Configure-a no seu ambiente antes de executar o programa:
+Obtenha a chave da API do DeepSeek. Configure-a no seu ambiente antes de executar o programa:
 
 Para `zsh` (temporário na sessão atual):
 
 ```bash
-export GEMINI_API_KEY="sua_chave_aqui"
+export LLM_API_KEY="sua_chave_deepseek_aqui"
 ```
 
 Para persistir, adicione a mesma linha ao seu `~/.zshrc`.

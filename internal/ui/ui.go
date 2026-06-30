@@ -79,8 +79,8 @@ func PrintHeader(title string) {
 
 	// center the title
 	padding := inner - len([]rune(title))
-	left := padding / 2
-	right := padding - left
+	left := max(0, padding/2)
+	right := max(0, padding-left)
 	mid := "║" + strings.Repeat(" ", left) + title + strings.Repeat(" ", right) + "║"
 
 	fmt.Println(Bold + FgBrightCyan + top + Reset)
@@ -229,13 +229,13 @@ func PrintModeBanner(icon, title, description string, bgColor string) {
 
 	titleStr := icon + " " + title
 	padding := inner - len([]rune(titleStr))
-	left := padding / 2
-	right := padding - left
+	left := max(0, padding/2)
+	right := max(0, padding-left)
 	midTitle := "║" + strings.Repeat(" ", left) + titleStr + strings.Repeat(" ", right) + "║"
 
 	padding2 := inner - len([]rune(description))
-	left2 := padding2 / 2
-	right2 := padding2 - left2
+	left2 := max(0, padding2/2)
+	right2 := max(0, padding2-left2)
 	midDesc := "║" + strings.Repeat(" ", left2) + description + strings.Repeat(" ", right2) + "║"
 
 	fmt.Println(bgColor + Bold + top + Reset)

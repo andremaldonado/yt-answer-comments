@@ -3,6 +3,7 @@ package service
 import (
 	"bufio"
 	"context"
+	"database/sql"
 	"encoding/csv"
 	"errors"
 	"fmt"
@@ -174,7 +175,7 @@ func (s *CommentService) handleUnansweredComment(ctx context.Context, comment *y
 	// ── Sentiment Analysis ────────────────────────────────────────────────────
 	ui.PrintSectionTitle("Análise do comentário")
 
-	sentiment, err := llm.AnalyzeComment(ctx, comment.Snippet.TextOriginal, s.App.GeminiClient)
+	sentiment, err := llm.AnalyzeComment(ctx, comment.Snippet.TextOriginal, s.App.LLMClient)
 	if err != nil {
 		return fmt.Errorf("erro na análise de sentimento: %w", err)
 	}
@@ -207,7 +208,7 @@ func (s *CommentService) handleUnansweredComment(ctx context.Context, comment *y
 		var videoTranscript string
 		transcriptLen := 0 // 0 = not fetched, -1 = error, >0 = char count
 		if opts.TranscriptionMode && sentiment.Tema != "Saudação/Agradecimento" {
-			videoTranscript, err = yt.GetVideoTranscription(ctx, s.App.YTService, comment.Snippet.VideoId)
+			videoTranscript, err = getTranscription(ctx, s.App, comment.Snippet.VideoId, videoTitle)
 			if err != nil {
 				log.Printf("Não foi possível obter a transcrição: %v", err)
 				transcriptLen = -1
@@ -220,7 +221,7 @@ func (s *CommentService) handleUnansweredComment(ctx context.Context, comment *y
 		ui.PrintContextBar(transcriptLen, len(authorHistory), len(pastAnswers))
 
 		ui.PrintSectionTitle("Sugestão de resposta")
-		suggestedAnswer, err = llm.SuggestAnswer(ctx, sentiment.Sentimento == "negativo", comment.Snippet.TextOriginal, videoTitle, videoDescription, videoTranscript, authorHistory, isMember, pastAnswers, s.App.GeminiClient)
+		suggestedAnswer, err = llm.SuggestAnswer(ctx, sentiment.Sentimento == "negativo", comment.Snippet.TextOriginal, videoTitle, videoDescription, videoTranscript, authorHistory, isMember, pastAnswers, s.App.LLMClient)
 
 		if err != nil { //TODO: fazer o if do auto-answer aqui para sair da app quando der erro
 			if opts.AutoAnswerMode {
@@ -374,4 +375,43 @@ func (s *CommentService) loadMembersFromCSV(filename string) (map[string]bool, e
 		}
 	}
 	return members, nil
+}
+
+func getTranscription(ctx context.Context, a *app.App, videoID, title string) (string, error) {
+	if a.TranscriptionDB != nil {
+		var t string
+		err := a.TranscriptionDB.QueryRowContext(ctx,
+			"SELECT transcription FROM transcriptions WHERE yt_video_id = $1 LIMIT 1", videoID,
+		).Scan(&t)
+		if err == nil {
+			debuglog.Log("[transcription] fonte=banco video_id=%s len=%d", videoID, len(t))
+			ui.Muted(fmt.Sprintf("📦 Transcrição carregada do banco local. (video_id=%s)", videoID))
+			return t, nil
+		}
+		if err != sql.ErrNoRows {
+			debuglog.Log("[transcription] erro no banco, tentando YouTube: %v", err)
+		} else {
+			debuglog.Log("[transcription] não encontrado no banco, tentando YouTube video_id=%s", videoID)
+		}
+	}
+	t, err := yt.GetVideoTranscription(ctx, a.YTService, videoID)
+	if err == nil {
+		debuglog.Log("[transcription] fonte=youtube video_id=%s len=%d", videoID, len(t))
+		ui.Muted(fmt.Sprintf("▶️  Transcrição carregada do YouTube. (video_id=%s)", videoID))
+		if a.TranscriptionDB != nil {
+			_, insertErr := a.TranscriptionDB.ExecContext(ctx,
+				`INSERT INTO transcriptions (yt_video_id, title, transcription)
+				 VALUES ($1, $2, $3)
+				 ON CONFLICT (yt_video_id) DO NOTHING`,
+				videoID, title, t,
+			)
+			if insertErr != nil {
+				debuglog.Log("[transcription] erro ao salvar no banco: %v", insertErr)
+			} else {
+				debuglog.Log("[transcription] salvo no banco video_id=%s", videoID)
+				ui.Muted("💾 Transcrição salva no banco local.")
+			}
+		}
+	}
+	return t, err
 }

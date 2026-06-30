@@ -27,6 +27,11 @@
 - [2026-04-18] Modos de operação têm UX diferente — propor "sempre mostrar menu" quebra a lógica do AutoAnswerMode que exige countdown com auto-skip.
   Do instead: antes de propor mudança de fluxo, mapear todos os modos (Manual, AutoAnswer, padrão) e garantir que a mudança respeita o comportamento esperado de cada um.
 
+## Domain Behavior Guardrails (cont.)
+
+- [2026-06-30] Mensagens de aviso/info no startup e no fluxo principal devem usar `ui.Warning` / `ui.Muted` / `ui.Info` — nunca `log.Printf` visível ao usuário.
+  Do instead: reservar `log.Printf` para erros de sistema que não chegam à UI; usar o pacote `ui` para tudo que o usuário vê.
+
 ## User Directives
 
 - [2026-04-18] Ao adicionar flag/feature, cobrir TODOS os pontos afetados na mesma entrega — exemplos de uso, help text, referências no README.

@@ -2,33 +2,38 @@ package app
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"log"
 	"os"
 
 	"answer-comments/internal/database"
+	"answer-comments/internal/ui"
 	yt "answer-comments/internal/youtube"
 
 	"github.com/joho/godotenv"
+	_ "github.com/lib/pq"
+	"github.com/openai/openai-go"
+	openaiopt "github.com/openai/openai-go/option"
 	"golang.org/x/oauth2/google"
 	"google.golang.org/api/option"
 	"google.golang.org/api/youtube/v3"
-	"google.golang.org/genai"
 )
 
 type Config struct {
 	ClientSecretFile string
-	GeminiAPIKey     string
+	LLMAPIKey        string
 	MembersCSVFile   string
 	DatabaseFile     string
 	TokenFile        string
 }
 
 type App struct {
-	Config       *Config
-	YTService    *youtube.Service
-	GeminiClient *genai.Client
-	ChannelID    string
+	Config          *Config
+	YTService       *youtube.Service
+	LLMClient       openai.Client
+	ChannelID       string
+	TranscriptionDB *sql.DB
 }
 
 func NewApp(ctx context.Context, transcriptionMode bool) (*App, error) {
@@ -39,14 +44,14 @@ func NewApp(ctx context.Context, transcriptionMode bool) (*App, error) {
 
 	appConfig := &Config{
 		ClientSecretFile: getEnv("CLIENT_SECRET_FILE", "data/client_secret.json"),
-		GeminiAPIKey:     os.Getenv("GEMINI_API_KEY"),
+		LLMAPIKey:        os.Getenv("LLM_API_KEY"),
 		MembersCSVFile:   getEnv("MEMBERS_CSV_FILE", "data/members.csv"),
 		DatabaseFile:     getEnv("DATABASE_FILE", "data/comments.db"),
 		TokenFile:        getEnv("TOKEN_FILE", "data/token.json"),
 	}
 
-	if appConfig.GeminiAPIKey == "" {
-		return nil, fmt.Errorf("GEMINI_API_KEY não configurada")
+	if appConfig.LLMAPIKey == "" {
+		return nil, fmt.Errorf("LLM_API_KEY não configurada")
 	}
 
 	// Initialize database
@@ -89,25 +94,42 @@ func NewApp(ctx context.Context, transcriptionMode bool) (*App, error) {
 	}
 	channelID := channelResponse.Items[0].Id
 
-	// Gemini Client
-	geminiClient, err := genai.NewClient(ctx, &genai.ClientConfig{
-		APIKey:  appConfig.GeminiAPIKey,
-		Backend: genai.BackendGeminiAPI,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("erro ao criar cliente Gemini: %w", err)
+	// LLM Client (DeepSeek)
+	llmClient := openai.NewClient(
+		openaiopt.WithAPIKey(appConfig.LLMAPIKey),
+		openaiopt.WithBaseURL("https://api.deepseek.com/v1"),
+	)
+
+	app := &App{
+		Config:    appConfig,
+		YTService: service,
+		LLMClient: llmClient,
+		ChannelID: channelID,
 	}
 
-	return &App{
-		Config:       appConfig,
-		YTService:    service,
-		GeminiClient: geminiClient,
-		ChannelID:    channelID,
-	}, nil
+	// Transcription DB (PostgreSQL, optional)
+	if dbURL := os.Getenv("DATABASE_URL"); dbURL != "" {
+		pgDB, err := sql.Open("postgres", dbURL)
+		if err != nil {
+			ui.Warning(fmt.Sprintf("Não foi possível conectar ao banco de transcrições: %v", err))
+		} else if err := pgDB.Ping(); err != nil {
+			ui.Warning(fmt.Sprintf("Banco de transcrições inacessível: %v", err))
+			pgDB.Close()
+		} else {
+			app.TranscriptionDB = pgDB
+		}
+	} else {
+		ui.Warning("DATABASE_URL não configurada — transcrições serão buscadas direto do YouTube.")
+	}
+
+	return app, nil
 }
 
 func (a *App) Close() {
 	database.CloseDB()
+	if a.TranscriptionDB != nil {
+		a.TranscriptionDB.Close()
+	}
 }
 
 func getEnv(key, fallback string) string {

@@ -4,7 +4,14 @@
 
 ## Próximos Passos
 
-1. **Painel lateral no terminal** — *Alta*
+1. **[BUG] Parar quando quota do YouTube estoura** — *Alta*
+   - **Contexto:** Quando a API do YouTube retorna erro 403 `quotaExceeded`, o programa não consegue publicar a resposta mas segue processando silenciosamente sem avisar o usuário. Isso tá acontecendo agora.
+   - **Subtarefas:**
+     - [ ] Detectar erro 403 com `quotaExceeded` na resposta da API ao publicar comentário
+     - [ ] Parar a execução com mensagem clara pro usuário ("Quota do YouTube esgotada. Programa interrompido.")
+     - [ ] Sair com status de erro apropriado
+
+2. **Painel lateral no terminal** — *Alta*
    - **Contexto:** A tela atual mistura informações primárias e secundárias. A ideia é separar: tela principal com o que importa para a decisão (autor, comentário, sugestão, ações) e painel lateral com o contexto de suporte (título do vídeo, sentimento/nota/tema, RAG).
    - **Subtarefas:**
      - [ ] Detectar largura do terminal e dividir em duas colunas
@@ -20,6 +27,7 @@
 
 ## Feito
 
+- [2026-06-30] **Cache de transcrições via PostgreSQL** — busca no banco local (tabela `transcriptions`, campo `yt_video_id`) antes de ir ao YouTube; salva automaticamente no banco quando busca do YouTube; aviso na UI de onde veio; `DATABASE_URL` opcional com fallback transparente.
 - [2026-04-20] **[BUG] Comentários pulados silenciosamente em queda de rede** — `isNetworkError` + `os.Exit(-1)` no outer loop.
 - [2026-04-20] **[BUG] Double Enter no prompt de próximo lote (AutoAnswerMode)** — race condition entre goroutine de stdin e `reader.ReadString`; prompt agora lê de `stdinCh` em AutoAnswerMode.
 - [2026-04-18] **Pausa nos comentários sem auto-publish (modo `-a`)** — `ui.Countdown(30s)` adicionado antes do menu de ações quando threshold não é atingido (path `shouldSuggestAnswer` e path `suggestedAnswer == ""`); `Countdown` passou a aceitar `msg string` para exibir o motivo (ex: "Nota 3 (mínimo 4) —").

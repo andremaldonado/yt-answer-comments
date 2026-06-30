@@ -10,14 +10,14 @@ import (
 
 	"answer-comments/internal/models"
 
-	"google.golang.org/genai"
+	"github.com/openai/openai-go"
 )
 
 // getAnalysisModel returns the model for analysis
 func getAnalysisModel() string {
 	model := os.Getenv("LLM_ANALYSIS_MODEL")
 	if model == "" {
-		return "gemini-2.0-flash-lite"
+		return "deepseek-v4-flash"
 	}
 	return model
 }
@@ -26,29 +26,29 @@ func getAnalysisModel() string {
 func getGenerationModel() string {
 	model := os.Getenv("LLM_GENERATION_MODEL")
 	if model == "" {
-		return "gemini-2.0-flash"
+		return "deepseek-v4-flash"
 	}
 	return model
 }
 
 // AnalyzeComment sends the comment to a smaller/cheaper LLM to get nota and sentimento.
-func AnalyzeComment(ctx context.Context, comment string, genaiClient *genai.Client) (models.SentimentAnalysis, error) {
+func AnalyzeComment(ctx context.Context, comment string, llmClient openai.Client) (models.SentimentAnalysis, error) {
 	prompt := getAnalysisPrompt(comment)
 
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 
-	resp, err := genaiClient.Models.GenerateContent(
-		ctx,
-		getAnalysisModel(),
-		genai.Text(prompt),
-		nil,
-	)
+	resp, err := llmClient.Chat.Completions.New(ctx, openai.ChatCompletionNewParams{
+		Model: openai.ChatModel(getAnalysisModel()),
+		Messages: []openai.ChatCompletionMessageParamUnion{
+			openai.UserMessage(prompt),
+		},
+	})
 	if err != nil {
-		return models.SentimentAnalysis{}, fmt.Errorf("erro ao analisar comentario com Gemini: %w", err)
+		return models.SentimentAnalysis{}, fmt.Errorf("erro ao analisar comentario com DeepSeek: %w", err)
 	}
 
-	raw := resp.Text()
+	raw := resp.Choices[0].Message.Content
 	cleaned := strings.TrimPrefix(raw, "```json")
 	cleaned = strings.TrimPrefix(cleaned, "```")
 	cleaned = strings.TrimSuffix(cleaned, "```")
@@ -62,7 +62,7 @@ func AnalyzeComment(ctx context.Context, comment string, genaiClient *genai.Clie
 }
 
 // suggestAnswer uses the GenerationModel to produce a response text for a given comment.
-func SuggestAnswer(ctx context.Context, isANegativeComment bool, comment string, videoTitle string, videoDescription string, videoTranscript string, authorHistory []models.Comment, isMember bool, ragContext []string, genaiClient *genai.Client) (string, error) {
+func SuggestAnswer(ctx context.Context, isANegativeComment bool, comment string, videoTitle string, videoDescription string, videoTranscript string, authorHistory []models.Comment, isMember bool, ragContext []string, llmClient openai.Client) (string, error) {
 
 	var prompt string
 	if isANegativeComment {
@@ -74,17 +74,17 @@ func SuggestAnswer(ctx context.Context, isANegativeComment bool, comment string,
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 
-	resp, err := genaiClient.Models.GenerateContent(
-		ctx,
-		getGenerationModel(),
-		genai.Text(prompt),
-		nil,
-	)
+	resp, err := llmClient.Chat.Completions.New(ctx, openai.ChatCompletionNewParams{
+		Model: openai.ChatModel(getGenerationModel()),
+		Messages: []openai.ChatCompletionMessageParamUnion{
+			openai.UserMessage(prompt),
+		},
+	})
 	if err != nil {
-		return "", fmt.Errorf("erro ao gerar conte\u00fado com Gemini: %w", err)
+		return "", fmt.Errorf("erro ao gerar conte\u00fado com DeepSeek: %w", err)
 	}
 
-	raw := resp.Text()
+	raw := resp.Choices[0].Message.Content
 	cleaned := strings.TrimSpace(raw)
 	cleaned = strings.TrimPrefix(cleaned, "```")
 	cleaned = strings.TrimSuffix(cleaned, "```")
