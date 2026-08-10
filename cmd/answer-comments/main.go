@@ -34,7 +34,8 @@ func main() {
 		fmt.Fprintf(os.Stderr, "  answer-comments -m           # Modo manual (sem sugestões)\n")
 		fmt.Fprintf(os.Stderr, "  answer-comments -a           # Modo automático (publica sem confirmação)\n")
 		fmt.Fprintf(os.Stderr, "  answer-comments -t           # Usa transcrição dos vídeos como contexto\n")
-		fmt.Fprintf(os.Stderr, "  answer-comments -a -t        # Combina modo automático com transcrição\n\n")
+		fmt.Fprintf(os.Stderr, "  answer-comments -a -t        # Combina modo automático com transcrição\n")
+		fmt.Fprintf(os.Stderr, "  answer-comments -M           # Processa comentários de membros do canal\n\n")
 	}
 
 	// Parse command line flags
@@ -47,6 +48,8 @@ func main() {
 	debugMode := flag.Bool("debug", false, "Ativa logging de debug em debug.log (ou caminho configurado com --debug-log)")
 	flag.BoolVar(debugMode, "d", false, "Atalho para --debug")
 	debugLogPath := flag.String("debug-log", "debug.log", "Caminho do arquivo de log de debug (requer --debug)")
+	membersMode := flag.Bool("members", false, "Habilita processamento de comentários de membros do canal (por padrão são ignorados)")
+	flag.BoolVar(membersMode, "M", false, "Atalho para --members")
 	flag.Parse()
 
 	if *debugMode {
@@ -69,6 +72,11 @@ func main() {
 	if *debugMode {
 		ui.PrintModeBanner("⚠️", "Modo de Debug Ativado", "Arquivo de debug será salvo.", ui.FgBrightRed)
 	}
+	if *membersMode {
+		ui.PrintModeBanner("⭐", "Modo Membros Ativado", "Comentários de membros serão processados normalmente.", ui.FgBrightMagenta)
+	} else {
+		ui.PrintModeBanner("⭐", "Membros Ignorados", "Comentários de membros serão pulados automaticamente.", ui.FgBrightYellow)
+	}
 
 	ctx := context.Background()
 
@@ -90,6 +98,7 @@ func main() {
 		ManualMode:        *manualMode,
 		AutoAnswerMode:    *autoAnswerMode,
 		TranscriptionMode: *transcriptionMode,
+		MembersMode:       *membersMode,
 	}
 
 	if err := commentService.ProcessComments(ctx, opts); err != nil {

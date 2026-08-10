@@ -36,6 +36,7 @@ type AnswerOptions struct {
 	ManualMode        bool
 	AutoAnswerMode    bool
 	TranscriptionMode bool
+	MembersMode       bool
 }
 
 func (s *CommentService) ProcessComments(ctx context.Context, opts AnswerOptions) error {
@@ -147,6 +148,10 @@ func (s *CommentService) ProcessComments(ctx context.Context, opts AnswerOptions
 func (s *CommentService) handleUnansweredComment(ctx context.Context, comment *youtube.Comment, publishedAt time.Time, membersMap map[string]bool, opts AnswerOptions, reader *bufio.Reader, stdinCh chan string) error {
 	debuglog.Log("[comment] início — id=%s autor=%q", comment.Id, comment.Snippet.AuthorDisplayName)
 	isMember := membersMap["https://www.youtube.com/channel/"+comment.Snippet.AuthorChannelId.Value]
+	if isMember && !opts.MembersMode {
+		debuglog.Log("[comment] membro ignorado (MembersMode desativado): %s", comment.Snippet.AuthorDisplayName)
+		return nil
+	}
 
 	videoCall := s.App.YTService.Videos.List([]string{"snippet"}).Id(comment.Snippet.VideoId)
 	videoResp, err := videoCall.Do()
