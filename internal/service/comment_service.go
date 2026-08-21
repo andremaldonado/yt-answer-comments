@@ -212,7 +212,7 @@ func (s *CommentService) handleUnansweredComment(ctx context.Context, comment *y
 	if shouldSuggestAnswer {
 		var videoTranscript string
 		transcriptLen := 0 // 0 = not fetched, -1 = error, >0 = char count
-		if opts.TranscriptionMode && sentiment.Tema != "Saudação/Agradecimento" {
+		if opts.TranscriptionMode {
 			videoTranscript, err = getTranscription(ctx, s.App, comment.Snippet.VideoId, videoTitle)
 			if err != nil {
 				log.Printf("Não foi possível obter a transcrição: %v", err)
