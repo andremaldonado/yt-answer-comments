@@ -2,15 +2,20 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"flag"
 	"fmt"
 	"log"
 	"os"
 
 	"answer-comments/internal/app"
+	"answer-comments/internal/database"
 	"answer-comments/internal/debuglog"
 	"answer-comments/internal/service"
 	"answer-comments/internal/ui"
+
+	"github.com/joho/godotenv"
+	_ "github.com/lib/pq"
 )
 
 func main() {
@@ -50,7 +55,13 @@ func main() {
 	debugLogPath := flag.String("debug-log", "debug.log", "Caminho do arquivo de log de debug (requer --debug)")
 	membersMode := flag.Bool("members", false, "Habilita processamento de comentários de membros do canal (por padrão são ignorados)")
 	flag.BoolVar(membersMode, "M", false, "Atalho para --members")
+	migrateSQLite := flag.String("migrate-sqlite", "", "Migra os dados de um arquivo SQLite legado (ex: data/comments.db) para o Postgres e sai")
 	flag.Parse()
+
+	if *migrateSQLite != "" {
+		runMigration(*migrateSQLite)
+		return
+	}
 
 	if *debugMode {
 		if err := debuglog.Init(*debugLogPath); err != nil {
@@ -105,4 +116,33 @@ func main() {
 		log.Printf("Erro durante o processamento: %v", err)
 		os.Exit(1)
 	}
+}
+
+// runMigration migra os dados de um arquivo SQLite legado para o Postgres (COMMENTS_DATABASE_URL) e encerra o programa.
+func runMigration(sqlitePath string) {
+	if err := godotenv.Load("config.env"); err != nil {
+		log.Printf("Aviso: Arquivo .env não encontrado. Usando variáveis de ambiente do sistema.")
+	}
+
+	pgURL := os.Getenv("COMMENTS_DATABASE_URL")
+	if pgURL == "" {
+		log.Fatal("COMMENTS_DATABASE_URL não configurada")
+	}
+
+	pgDB, err := sql.Open("postgres", pgURL)
+	if err != nil {
+		log.Fatalf("erro ao conectar ao Postgres: %v", err)
+	}
+	defer pgDB.Close()
+
+	if err := database.InitDB(pgURL); err != nil {
+		log.Fatalf("erro ao preparar a tabela comments no Postgres: %v", err)
+	}
+
+	migrated, err := database.MigrateFromSQLite(sqlitePath, pgDB)
+	if err != nil {
+		log.Fatalf("erro durante a migração: %v", err)
+	}
+
+	fmt.Printf("Migração concluída: %d comentários migrados para o Postgres.\n", migrated)
 }

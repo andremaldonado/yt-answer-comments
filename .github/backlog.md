@@ -27,6 +27,7 @@
 
 ## Feito
 
+- [2026-09-18] **Unificação dos bancos em PostgreSQL** — tabela `comments` migrada de SQLite (`data/comments.db`) para uma database Postgres dedicada (`COMMENTS_DATABASE_URL`), separada da database de transcrições (`TRANSCRIPTIONS_DATABASE_URL`, renomeada de `DATABASE_URL`); ambas as conexões passaram a ser obrigatórias na subida do app (sem fallback pro YouTube ao vivo); DDL segue o mesmo padrão ad-hoc `CREATE TABLE IF NOT EXISTS`; comando `--migrate-sqlite <path>` migra os dados legados de forma idempotente (`ON CONFLICT (id) DO NOTHING`), mantendo `go-sqlite3` no go.mod só para esse fluxo.
 - [2026-08-21] **[BUG] Transcrição não buscada para comentários de Saudação/Agradecimento** — removida a condição `sentiment.Tema != "Saudação/Agradecimento"` em `handleUnansweredComment`; agora a busca de transcrição depende só de `opts.TranscriptionMode`.
 - [2026-06-30] **Flag -M para habilitar respostas a membros do canal** — sem `-M`/`--members`, comentários de membros são pulados silenciosamente (`isMember && !opts.MembersMode` retorna cedo em `handleUnansweredComment`); banner de startup mostra "Modo Membros Ativado" ou "Membros Ignorados" conforme a flag.
 - [2026-06-30] **Cache de transcrições via PostgreSQL** — busca no banco local (tabela `transcriptions`, campo `yt_video_id`) antes de ir ao YouTube; salva automaticamente no banco quando busca do YouTube; aviso na UI de onde veio; `DATABASE_URL` opcional com fallback transparente.

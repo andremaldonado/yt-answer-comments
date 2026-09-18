@@ -8,7 +8,6 @@ import (
 	"os"
 
 	"answer-comments/internal/database"
-	"answer-comments/internal/ui"
 	yt "answer-comments/internal/youtube"
 
 	"github.com/joho/godotenv"
@@ -21,11 +20,12 @@ import (
 )
 
 type Config struct {
-	ClientSecretFile string
-	LLMAPIKey        string
-	MembersCSVFile   string
-	DatabaseFile     string
-	TokenFile        string
+	ClientSecretFile          string
+	LLMAPIKey                 string
+	MembersCSVFile            string
+	CommentsDatabaseURL       string
+	TranscriptionsDatabaseURL string
+	TokenFile                 string
 }
 
 type App struct {
@@ -43,20 +43,27 @@ func NewApp(ctx context.Context, transcriptionMode bool) (*App, error) {
 	}
 
 	appConfig := &Config{
-		ClientSecretFile: getEnv("CLIENT_SECRET_FILE", "data/client_secret.json"),
-		LLMAPIKey:        os.Getenv("LLM_API_KEY"),
-		MembersCSVFile:   getEnv("MEMBERS_CSV_FILE", "data/members.csv"),
-		DatabaseFile:     getEnv("DATABASE_FILE", "data/comments.db"),
-		TokenFile:        getEnv("TOKEN_FILE", "data/token.json"),
+		ClientSecretFile:          getEnv("CLIENT_SECRET_FILE", "data/client_secret.json"),
+		LLMAPIKey:                 os.Getenv("LLM_API_KEY"),
+		MembersCSVFile:            getEnv("MEMBERS_CSV_FILE", "data/members.csv"),
+		CommentsDatabaseURL:       os.Getenv("COMMENTS_DATABASE_URL"),
+		TranscriptionsDatabaseURL: os.Getenv("TRANSCRIPTIONS_DATABASE_URL"),
+		TokenFile:                 getEnv("TOKEN_FILE", "data/token.json"),
 	}
 
 	if appConfig.LLMAPIKey == "" {
 		return nil, fmt.Errorf("LLM_API_KEY não configurada")
 	}
+	if appConfig.CommentsDatabaseURL == "" {
+		return nil, fmt.Errorf("COMMENTS_DATABASE_URL não configurada")
+	}
+	if appConfig.TranscriptionsDatabaseURL == "" {
+		return nil, fmt.Errorf("TRANSCRIPTIONS_DATABASE_URL não configurada")
+	}
 
-	// Initialize database
-	if err := database.InitDB(); err != nil {
-		return nil, fmt.Errorf("erro ao inicializar o banco de dados: %w", err)
+	// Initialize comments database (PostgreSQL)
+	if err := database.InitDB(appConfig.CommentsDatabaseURL); err != nil {
+		return nil, fmt.Errorf("erro ao inicializar o banco de comentários: %w", err)
 	}
 
 	// YouTube Client
@@ -107,20 +114,16 @@ func NewApp(ctx context.Context, transcriptionMode bool) (*App, error) {
 		ChannelID: channelID,
 	}
 
-	// Transcription DB (PostgreSQL, optional)
-	if dbURL := os.Getenv("DATABASE_URL"); dbURL != "" {
-		pgDB, err := sql.Open("postgres", dbURL)
-		if err != nil {
-			ui.Warning(fmt.Sprintf("Não foi possível conectar ao banco de transcrições: %v", err))
-		} else if err := pgDB.Ping(); err != nil {
-			ui.Warning(fmt.Sprintf("Banco de transcrições inacessível: %v", err))
-			pgDB.Close()
-		} else {
-			app.TranscriptionDB = pgDB
-		}
-	} else {
-		ui.Warning("DATABASE_URL não configurada — transcrições serão buscadas direto do YouTube.")
+	// Transcription DB (PostgreSQL)
+	pgDB, err := sql.Open("postgres", appConfig.TranscriptionsDatabaseURL)
+	if err != nil {
+		return nil, fmt.Errorf("erro ao conectar ao banco de transcrições: %w", err)
 	}
+	if err := pgDB.Ping(); err != nil {
+		pgDB.Close()
+		return nil, fmt.Errorf("banco de transcrições inacessível: %w", err)
+	}
+	app.TranscriptionDB = pgDB
 
 	return app, nil
 }

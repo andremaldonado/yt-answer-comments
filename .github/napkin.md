@@ -32,6 +32,12 @@
 - [2026-06-30] Mensagens de aviso/info no startup e no fluxo principal devem usar `ui.Warning` / `ui.Muted` / `ui.Info` — nunca `log.Printf` visível ao usuário.
   Do instead: reservar `log.Printf` para erros de sistema que não chegam à UI; usar o pacote `ui` para tudo que o usuário vê.
 
+- [2026-09-18] Não existe ferramenta de migration no projeto (nem SQLite nem Postgres) — DDL é sempre `CREATE TABLE IF NOT EXISTS` ad-hoc no Go, chamado no boot (`InitDB`). Não assumir golang-migrate ou arquivos `.sql` versionados.
+  Do instead: seguir o padrão ad-hoc existente a menos que o usuário peça explicitamente por uma lib de migration.
+
+- [2026-09-18] Depois de trocar dependências de storage (ex: driver SQLite → Postgres), `go.mod`/`go.sum` podem já ter diffs pré-existentes não relacionados (bumps de dependência de outra tarefa em andamento) — não assumir que tudo no diff é do escopo atual.
+  Do instead: rodar `git diff <arquivo>` por arquivo antes de commitar e separar por hunks (`git add -p`) quando o mesmo arquivo mistura mudanças de escopos diferentes.
+
 ## User Directives
 
 - [2026-04-18] Ao adicionar flag/feature, cobrir TODOS os pontos afetados na mesma entrega — exemplos de uso, help text, referências no README.

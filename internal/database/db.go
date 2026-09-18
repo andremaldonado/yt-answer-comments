@@ -2,12 +2,11 @@ package database
 
 import (
 	"database/sql"
-	"os"
 	"time"
 
 	"answer-comments/internal/models"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "github.com/lib/pq"
 	"google.golang.org/api/youtube/v3"
 )
 
@@ -26,15 +25,15 @@ type DBComment struct {
 
 var db *sql.DB
 
-// InitDB initializes the SQLite database connection and creates tables if needed
-func InitDB() error {
+// InitDB initializes the PostgreSQL database connection and creates tables if needed
+func InitDB(databaseURL string) error {
 	var err error
-	dbPath := os.Getenv("DATABASE_FILE")
-	if dbPath == "" {
-		dbPath = "data/comments.db"
-	}
-	db, err = sql.Open("sqlite3", dbPath)
+	db, err = sql.Open("postgres", databaseURL)
 	if err != nil {
+		return err
+	}
+
+	if err = db.Ping(); err != nil {
 		return err
 	}
 
@@ -48,9 +47,9 @@ func InitDB() error {
 			score INTEGER NOT NULL,
 			response TEXT,
 			theme TEXT,
-			user_answered BOOLEAN NOT NULL DEFAULT 0,
-			created_at DATETIME NOT NULL,
-			responded_at DATETIME,
+			user_answered BOOLEAN NOT NULL DEFAULT false,
+			created_at TIMESTAMPTZ NOT NULL,
+			responded_at TIMESTAMPTZ,
 			video_id TEXT NOT NULL
 		)
 	`)
@@ -58,22 +57,9 @@ func InitDB() error {
 		return err
 	}
 
-	// Add theme column if it doesn't exist
-	_, err = db.Exec(`
-		SELECT theme FROM comments LIMIT 1
-	`)
+	_, err = db.Exec(`ALTER TABLE comments ADD COLUMN IF NOT EXISTS theme TEXT`)
 	if err != nil {
-		// If the error indicates that the column doesn't exist, add it
-		if err.Error() == "no such column: theme" {
-			_, err = db.Exec(`
-				ALTER TABLE comments ADD COLUMN theme TEXT
-			`)
-			if err != nil {
-				return err
-			}
-		} else {
-			return err
-		}
+		return err
 	}
 
 	return nil
@@ -90,7 +76,7 @@ func SaveComment(comment *youtube.Comment, sentiment string, score int, theme st
 		INSERT INTO comments (
 			id, author, comment_text, sentiment, score, response, theme,
 			user_answered, created_at, responded_at, video_id
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
 		comment.Id,
 		comment.Snippet.AuthorDisplayName,
 		comment.Snippet.TextOriginal,
@@ -109,11 +95,11 @@ func SaveComment(comment *youtube.Comment, sentiment string, score int, theme st
 // GetLastComments retorna os últimos N comentários e respostas do mesmo autor
 func GetLastComments(author string, limit int) ([]models.Comment, error) {
 	rows, err := db.Query(`
-		SELECT id, author, comment_text, response, datetime(created_at) as created_at
+		SELECT id, author, comment_text, response, created_at
 		FROM comments
-		WHERE author = ?
+		WHERE author = $1
 		ORDER BY created_at DESC
-		LIMIT ?
+		LIMIT $2
 	`, author, limit)
 	if err != nil {
 		return nil, err
@@ -124,18 +110,9 @@ func GetLastComments(author string, limit int) ([]models.Comment, error) {
 	for rows.Next() {
 		var id, author string
 		var c models.Comment
-		var createdAt string // SQLite armazena datetime como string
-		err := rows.Scan(&id, &author, &c.CommentText, &c.Response, &createdAt)
+		err := rows.Scan(&id, &author, &c.CommentText, &c.Response, &c.CreatedAt)
 		if err != nil {
 			return nil, err
-		}
-		c.CreatedAt, err = time.Parse(time.RFC3339, createdAt)
-		if err != nil {
-			// Try the old format as fallback
-			c.CreatedAt, err = time.Parse("2006-01-02 15:04:05", createdAt)
-			if err != nil {
-				return nil, err
-			}
 		}
 		comments = append(comments, c)
 	}
@@ -154,12 +131,12 @@ func GetPreviousAnswersByContext(theme string, sentiment string, limit int) ([]s
 	rows, err := db.Query(`
 		SELECT comment_text, response
 		FROM comments
-		WHERE theme = ? 
-		AND sentiment = ?
+		WHERE theme = $1
+		AND sentiment = $2
 		AND response != ''
-		AND user_answered = 1
+		AND user_answered = true
 		ORDER BY responded_at DESC
-		LIMIT ?
+		LIMIT $3
 	`, theme, sentiment, limit)
 	if err != nil {
 		return nil, err
