@@ -31,9 +31,22 @@ func getGenerationModel() string {
 	return model
 }
 
+// buildDateContext builds a string informing the LLM of today's date, the comment's
+// publish date, and how many days have passed — so it doesn't assume the comment's
+// time-relative references (weekend, holiday, etc.) still apply.
+func buildDateContext(commentPublishedAt time.Time) string {
+	today := time.Now()
+	days := int(today.Sub(commentPublishedAt).Hours() / 24)
+	return fmt.Sprintf(
+		"\nCONTEXTO TEMPORAL: Hoje é %s. O comentário foi publicado em %s (%d dia(s) atrás). "+
+			"Leve essa diferença em conta ao responder — não presuma que ainda é o mesmo dia, fim de semana, feriado ou período mencionado no comentário caso o tempo já tenha passado.\n",
+		today.Format("02/01/2006"), commentPublishedAt.Format("02/01/2006"), days,
+	)
+}
+
 // AnalyzeComment sends the comment to a smaller/cheaper LLM to get nota and sentimento.
-func AnalyzeComment(ctx context.Context, comment string, llmClient openai.Client) (models.SentimentAnalysis, error) {
-	prompt := getAnalysisPrompt(comment)
+func AnalyzeComment(ctx context.Context, comment string, commentPublishedAt time.Time, llmClient openai.Client) (models.SentimentAnalysis, error) {
+	prompt := getAnalysisPrompt(comment, commentPublishedAt)
 
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
@@ -62,13 +75,13 @@ func AnalyzeComment(ctx context.Context, comment string, llmClient openai.Client
 }
 
 // suggestAnswer uses the GenerationModel to produce a response text for a given comment.
-func SuggestAnswer(ctx context.Context, isANegativeComment bool, comment string, videoTitle string, videoDescription string, videoTranscript string, authorHistory []models.Comment, isMember bool, ragContext []string, llmClient openai.Client) (string, error) {
+func SuggestAnswer(ctx context.Context, isANegativeComment bool, comment string, videoTitle string, videoDescription string, videoTranscript string, authorHistory []models.Comment, isMember bool, ragContext []string, commentPublishedAt time.Time, llmClient openai.Client) (string, error) {
 
 	var prompt string
 	if isANegativeComment {
-		prompt = getNegativeAnswerPrompt(comment, videoTitle, videoDescription, videoTranscript, authorHistory, isMember, ragContext)
+		prompt = getNegativeAnswerPrompt(comment, videoTitle, videoDescription, videoTranscript, authorHistory, isMember, ragContext, commentPublishedAt)
 	} else {
-		prompt = getPositiveAnswerPrompt(comment, videoTitle, videoDescription, videoTranscript, authorHistory, isMember, ragContext)
+		prompt = getPositiveAnswerPrompt(comment, videoTitle, videoDescription, videoTranscript, authorHistory, isMember, ragContext, commentPublishedAt)
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
@@ -94,7 +107,7 @@ func SuggestAnswer(ctx context.Context, isANegativeComment bool, comment string,
 }
 
 // getAnswerPrompt constructs the prompt for the LLM based on the comment and video context.
-func getPositiveAnswerPrompt(comment string, videoTitle string, videoDescription string, videoTranscript string, authorHistory []models.Comment, isMember bool, ragContext []string) string {
+func getPositiveAnswerPrompt(comment string, videoTitle string, videoDescription string, videoTranscript string, authorHistory []models.Comment, isMember bool, ragContext []string, commentPublishedAt time.Time) string {
 	prompt := os.Getenv("PROMPT_POSITIVE_ANSWER")
 	if prompt == "" {
 		// Fallback removed for brevity in this tool call, but ideally keep a minimal default or just log/error
@@ -136,12 +149,13 @@ func getPositiveAnswerPrompt(comment string, videoTitle string, videoDescription
 	prompt = strings.ReplaceAll(prompt, "{{HISTORY}}", historyContext)
 	prompt = strings.ReplaceAll(prompt, "{{CONSISTENCY}}", consistencyContext)
 	prompt = strings.ReplaceAll(prompt, "{{MEMBER_NOTICE}}", memberNotice)
+	prompt = strings.ReplaceAll(prompt, "{{DATE_CONTEXT}}", buildDateContext(commentPublishedAt))
 
 	return prompt
 }
 
 // getAnswerPrompt constructs the prompt for the LLM based on the comment and video context.
-func getNegativeAnswerPrompt(comment string, videoTitle string, videoDescription string, videoTranscript string, authorHistory []models.Comment, isMember bool, ragContext []string) string {
+func getNegativeAnswerPrompt(comment string, videoTitle string, videoDescription string, videoTranscript string, authorHistory []models.Comment, isMember bool, ragContext []string, commentPublishedAt time.Time) string {
 	prompt := os.Getenv("PROMPT_NEGATIVE_ANSWER")
 	if prompt == "" {
 		return "PROMPT_NEGATIVE_ANSWER not set"
@@ -187,15 +201,17 @@ func getNegativeAnswerPrompt(comment string, videoTitle string, videoDescription
 	prompt = strings.ReplaceAll(prompt, "{{HISTORY}}", historyContext)
 	prompt = strings.ReplaceAll(prompt, "{{CONSISTENCY}}", consistencyContext)
 	prompt = strings.ReplaceAll(prompt, "{{MEMBER_NOTICE}}", memberNotice)
+	prompt = strings.ReplaceAll(prompt, "{{DATE_CONTEXT}}", buildDateContext(commentPublishedAt))
 
 	return prompt
 }
 
 // getAnalysisPrompt constructs a short prompt for the analysis model.
-func getAnalysisPrompt(comment string) string {
+func getAnalysisPrompt(comment string, commentPublishedAt time.Time) string {
 	prompt := os.Getenv("PROMPT_ANALYSIS")
 	if prompt == "" {
 		return "PROMPT_ANALYSIS not set"
 	}
-	return strings.ReplaceAll(prompt, "{{COMMENT}}", comment)
+	prompt = strings.ReplaceAll(prompt, "{{COMMENT}}", comment)
+	return strings.ReplaceAll(prompt, "{{DATE_CONTEXT}}", buildDateContext(commentPublishedAt))
 }

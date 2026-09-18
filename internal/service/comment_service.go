@@ -180,7 +180,7 @@ func (s *CommentService) handleUnansweredComment(ctx context.Context, comment *y
 	// ── Sentiment Analysis ────────────────────────────────────────────────────
 	ui.PrintSectionTitle("Análise do comentário")
 
-	sentiment, err := llm.AnalyzeComment(ctx, comment.Snippet.TextOriginal, s.App.LLMClient)
+	sentiment, err := llm.AnalyzeComment(ctx, comment.Snippet.TextOriginal, publishedAt, s.App.LLMClient)
 	if err != nil {
 		return fmt.Errorf("erro na análise de sentimento: %w", err)
 	}
@@ -226,7 +226,7 @@ func (s *CommentService) handleUnansweredComment(ctx context.Context, comment *y
 		ui.PrintContextBar(transcriptLen, len(authorHistory), len(pastAnswers))
 
 		ui.PrintSectionTitle("Sugestão de resposta")
-		suggestedAnswer, err = llm.SuggestAnswer(ctx, sentiment.Sentimento == "negativo", comment.Snippet.TextOriginal, videoTitle, videoDescription, videoTranscript, authorHistory, isMember, pastAnswers, s.App.LLMClient)
+		suggestedAnswer, err = llm.SuggestAnswer(ctx, sentiment.Sentimento == "negativo", comment.Snippet.TextOriginal, videoTitle, videoDescription, videoTranscript, authorHistory, isMember, pastAnswers, publishedAt, s.App.LLMClient)
 
 		if err != nil { //TODO: fazer o if do auto-answer aqui para sair da app quando der erro
 			if opts.AutoAnswerMode {
