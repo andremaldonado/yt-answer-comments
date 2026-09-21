@@ -75,13 +75,13 @@ func AnalyzeComment(ctx context.Context, comment string, commentPublishedAt time
 }
 
 // suggestAnswer uses the GenerationModel to produce a response text for a given comment.
-func SuggestAnswer(ctx context.Context, isANegativeComment bool, comment string, videoTitle string, videoDescription string, videoTranscript string, authorHistory []models.Comment, isMember bool, ragContext []string, commentPublishedAt time.Time, llmClient openai.Client) (string, error) {
+func SuggestAnswer(ctx context.Context, isANegativeComment bool, comment string, videoTitle string, videoDescription string, videoTranscript string, authorHistory []models.Comment, isMember bool, ragContext []string, authorProfile []string, commentPublishedAt time.Time, llmClient openai.Client) (string, error) {
 
 	var prompt string
 	if isANegativeComment {
-		prompt = getNegativeAnswerPrompt(comment, videoTitle, videoDescription, videoTranscript, authorHistory, isMember, ragContext, commentPublishedAt)
+		prompt = getNegativeAnswerPrompt(comment, videoTitle, videoDescription, videoTranscript, authorHistory, isMember, ragContext, authorProfile, commentPublishedAt)
 	} else {
-		prompt = getPositiveAnswerPrompt(comment, videoTitle, videoDescription, videoTranscript, authorHistory, isMember, ragContext, commentPublishedAt)
+		prompt = getPositiveAnswerPrompt(comment, videoTitle, videoDescription, videoTranscript, authorHistory, isMember, ragContext, authorProfile, commentPublishedAt)
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
@@ -106,8 +106,21 @@ func SuggestAnswer(ctx context.Context, isANegativeComment bool, comment string,
 	return cleaned, nil
 }
 
+// buildProfileContext formats known facts about the author into a prompt block.
+func buildProfileContext(authorProfile []string) string {
+	if len(authorProfile) == 0 {
+		return ""
+	}
+	profileContext := "\nPERFIL CONHECIDO DESTA PESSOA (fatos aprendidos em interações anteriores):\n"
+	for _, fact := range authorProfile {
+		profileContext += "- " + fact + "\n"
+	}
+	profileContext += "\nUse esse perfil para personalizar a resposta quando fizer sentido, sem forçar menção a esses fatos.\n"
+	return profileContext
+}
+
 // getAnswerPrompt constructs the prompt for the LLM based on the comment and video context.
-func getPositiveAnswerPrompt(comment string, videoTitle string, videoDescription string, videoTranscript string, authorHistory []models.Comment, isMember bool, ragContext []string, commentPublishedAt time.Time) string {
+func getPositiveAnswerPrompt(comment string, videoTitle string, videoDescription string, videoTranscript string, authorHistory []models.Comment, isMember bool, ragContext []string, authorProfile []string, commentPublishedAt time.Time) string {
 	prompt := os.Getenv("PROMPT_POSITIVE_ANSWER")
 	if prompt == "" {
 		// Fallback removed for brevity in this tool call, but ideally keep a minimal default or just log/error
@@ -149,13 +162,14 @@ func getPositiveAnswerPrompt(comment string, videoTitle string, videoDescription
 	prompt = strings.ReplaceAll(prompt, "{{HISTORY}}", historyContext)
 	prompt = strings.ReplaceAll(prompt, "{{CONSISTENCY}}", consistencyContext)
 	prompt = strings.ReplaceAll(prompt, "{{MEMBER_NOTICE}}", memberNotice)
+	prompt = strings.ReplaceAll(prompt, "{{PROFILE}}", buildProfileContext(authorProfile))
 	prompt = strings.ReplaceAll(prompt, "{{DATE_CONTEXT}}", buildDateContext(commentPublishedAt))
 
 	return prompt
 }
 
 // getAnswerPrompt constructs the prompt for the LLM based on the comment and video context.
-func getNegativeAnswerPrompt(comment string, videoTitle string, videoDescription string, videoTranscript string, authorHistory []models.Comment, isMember bool, ragContext []string, commentPublishedAt time.Time) string {
+func getNegativeAnswerPrompt(comment string, videoTitle string, videoDescription string, videoTranscript string, authorHistory []models.Comment, isMember bool, ragContext []string, authorProfile []string, commentPublishedAt time.Time) string {
 	prompt := os.Getenv("PROMPT_NEGATIVE_ANSWER")
 	if prompt == "" {
 		return "PROMPT_NEGATIVE_ANSWER not set"
@@ -201,6 +215,7 @@ func getNegativeAnswerPrompt(comment string, videoTitle string, videoDescription
 	prompt = strings.ReplaceAll(prompt, "{{HISTORY}}", historyContext)
 	prompt = strings.ReplaceAll(prompt, "{{CONSISTENCY}}", consistencyContext)
 	prompt = strings.ReplaceAll(prompt, "{{MEMBER_NOTICE}}", memberNotice)
+	prompt = strings.ReplaceAll(prompt, "{{PROFILE}}", buildProfileContext(authorProfile))
 	prompt = strings.ReplaceAll(prompt, "{{DATE_CONTEXT}}", buildDateContext(commentPublishedAt))
 
 	return prompt
@@ -214,4 +229,56 @@ func getAnalysisPrompt(comment string, commentPublishedAt time.Time) string {
 	}
 	prompt = strings.ReplaceAll(prompt, "{{COMMENT}}", comment)
 	return strings.ReplaceAll(prompt, "{{DATE_CONTEXT}}", buildDateContext(commentPublishedAt))
+}
+
+// ExtractProfileFacts analisa o comentário publicado e os fatos já conhecidos sobre o autor,
+// retornando apenas os fatos novos e duráveis (vazio se nada de novo for encontrado).
+func ExtractProfileFacts(ctx context.Context, comment string, existingFacts []string, llmClient openai.Client) ([]string, error) {
+	prompt := getExtractProfilePrompt(comment, existingFacts)
+
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+
+	resp, err := llmClient.Chat.Completions.New(ctx, openai.ChatCompletionNewParams{
+		Model: openai.ChatModel(getAnalysisModel()),
+		Messages: []openai.ChatCompletionMessageParamUnion{
+			openai.UserMessage(prompt),
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("erro ao extrair perfil com DeepSeek: %w", err)
+	}
+
+	raw := resp.Choices[0].Message.Content
+	cleaned := strings.TrimPrefix(raw, "```json")
+	cleaned = strings.TrimPrefix(cleaned, "```")
+	cleaned = strings.TrimSuffix(cleaned, "```")
+	cleaned = strings.TrimSpace(cleaned)
+
+	var facts []string
+	if err := json.Unmarshal([]byte(cleaned), &facts); err != nil {
+		return nil, fmt.Errorf("parsing JSON de extração de perfil: %w; raw: %s", err, raw)
+	}
+	return facts, nil
+}
+
+// getExtractProfilePrompt constructs the prompt used to extract new durable facts about the author.
+func getExtractProfilePrompt(comment string, existingFacts []string) string {
+	prompt := os.Getenv("PROMPT_EXTRACT_PROFILE")
+	if prompt == "" {
+		return "PROMPT_EXTRACT_PROFILE not set"
+	}
+
+	existingFactsText := "(nenhum)"
+	if len(existingFacts) > 0 {
+		var b strings.Builder
+		for _, fact := range existingFacts {
+			b.WriteString("- " + fact + "\n")
+		}
+		existingFactsText = b.String()
+	}
+
+	prompt = strings.ReplaceAll(prompt, "{{COMMENT}}", comment)
+	prompt = strings.ReplaceAll(prompt, "{{EXISTING_FACTS}}", existingFactsText)
+	return prompt
 }

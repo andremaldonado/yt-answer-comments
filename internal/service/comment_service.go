@@ -37,6 +37,7 @@ type AnswerOptions struct {
 	AutoAnswerMode    bool
 	TranscriptionMode bool
 	MembersMode       bool
+	ShowProfile       bool
 }
 
 func (s *CommentService) ProcessComments(ctx context.Context, opts AnswerOptions) error {
@@ -175,6 +176,15 @@ func (s *CommentService) handleUnansweredComment(ctx context.Context, comment *y
 	}
 
 	ui.PrintCommentMeta(videoTitle, authorLine, brTime.Format("02/01/2006 às 15:04"))
+
+	authorProfile, err := database.GetAuthorProfile(comment.Snippet.AuthorChannelId.Value)
+	if err != nil {
+		log.Printf("Erro ao buscar perfil do autor: %v", err)
+	}
+	if opts.ShowProfile {
+		ui.PrintAuthorProfile(authorProfile)
+	}
+
 	ui.PrintComment(comment.Snippet.TextDisplay)
 
 	// ── Sentiment Analysis ────────────────────────────────────────────────────
@@ -192,6 +202,8 @@ func (s *CommentService) handleUnansweredComment(ctx context.Context, comment *y
 	)
 
 	var answer, suggestedAnswer, input string
+	var newFacts []string
+	var factsExtracted bool
 	if opts.ManualMode {
 		input = "E"
 	}
@@ -226,7 +238,7 @@ func (s *CommentService) handleUnansweredComment(ctx context.Context, comment *y
 		ui.PrintContextBar(transcriptLen, len(authorHistory), len(pastAnswers))
 
 		ui.PrintSectionTitle("Sugestão de resposta")
-		suggestedAnswer, err = llm.SuggestAnswer(ctx, sentiment.Sentimento == "negativo", comment.Snippet.TextOriginal, videoTitle, videoDescription, videoTranscript, authorHistory, isMember, pastAnswers, publishedAt, s.App.LLMClient)
+		suggestedAnswer, err = llm.SuggestAnswer(ctx, sentiment.Sentimento == "negativo", comment.Snippet.TextOriginal, videoTitle, videoDescription, videoTranscript, authorHistory, isMember, pastAnswers, authorProfile, publishedAt, s.App.LLMClient)
 
 		if err != nil { //TODO: fazer o if do auto-answer aqui para sair da app quando der erro
 			if opts.AutoAnswerMode {
@@ -242,6 +254,15 @@ func (s *CommentService) handleUnansweredComment(ctx context.Context, comment *y
 
 		answer = strings.TrimSpace(suggestedAnswer)
 		ui.PrintSuggestedAnswer(answer)
+
+		newFacts, err = llm.ExtractProfileFacts(ctx, comment.Snippet.TextOriginal, authorProfile, s.App.LLMClient)
+		factsExtracted = true
+		if err != nil {
+			log.Printf("Erro ao extrair fatos do perfil do autor: %v", err)
+			newFacts = nil
+		} else if len(newFacts) > 0 {
+			ui.PrintNewProfileFacts(newFacts)
+		}
 
 		if sentiment.Sentimento == "positivo" && sentiment.Nota >= 4 && opts.AutoAnswerMode {
 			input = "S"
@@ -296,7 +317,7 @@ func (s *CommentService) handleUnansweredComment(ctx context.Context, comment *y
 	debuglog.Log("[comment] input final=%q antes do switch", input)
 	switch input {
 	case "S":
-		return s.publishAndSave(comment, &sentiment, answer, false)
+		return s.publishAndSave(ctx, comment, &sentiment, answer, false, newFacts, factsExtracted)
 	case "E":
 		ui.PrintEditPrompt()
 		var editedAnswer string
@@ -310,7 +331,7 @@ func (s *CommentService) handleUnansweredComment(ctx context.Context, comment *y
 			ui.Warning("Resposta vazia — comentário ignorado.")
 			return nil
 		}
-		return s.publishAndSave(comment, &sentiment, editedAnswer, true)
+		return s.publishAndSave(ctx, comment, &sentiment, editedAnswer, true, newFacts, factsExtracted)
 	case "Q":
 		os.Exit(0)
 	default:
@@ -332,7 +353,10 @@ func thresholdReason(s models.SentimentAnalysis) string {
 	return fmt.Sprintf("Nota %d (mínimo 4) —", s.Nota)
 }
 
-func (s *CommentService) publishAndSave(comment *youtube.Comment, sentiment *models.SentimentAnalysis, answer string, userAnswered bool) error {
+// publishAndSave publica a resposta e salva o comentário no histórico. newFacts/factsExtracted
+// permitem reaproveitar uma extração de perfil já feita antes de publicar (quando a sugestão de
+// resposta é exibida); se factsExtracted for false, a extração ainda não rodou e é feita aqui.
+func (s *CommentService) publishAndSave(ctx context.Context, comment *youtube.Comment, sentiment *models.SentimentAnalysis, answer string, userAnswered bool, newFacts []string, factsExtracted bool) error {
 	err := yt.PublishComment(s.App.YTService, comment.Id, answer)
 	if err != nil {
 		return fmt.Errorf("falha ao publicar resposta: %w", err)
@@ -344,7 +368,39 @@ func (s *CommentService) publishAndSave(comment *youtube.Comment, sentiment *mod
 	} else {
 		ui.Success("Resposta publicada e salva com sucesso!")
 	}
+
+	s.updateAuthorProfile(ctx, comment, newFacts, factsExtracted)
+
 	return nil
+}
+
+// updateAuthorProfile persiste novos fatos duráveis sobre o autor. Se factsExtracted for false,
+// a extração ainda não rodou (ex: modo manual, sem sugestão de resposta) e é feita agora a partir
+// do comentário publicado. Falhas aqui não bloqueiam a publicação — só são logadas.
+func (s *CommentService) updateAuthorProfile(ctx context.Context, comment *youtube.Comment, newFacts []string, factsExtracted bool) {
+	authorChannelID := comment.Snippet.AuthorChannelId.Value
+
+	if !factsExtracted {
+		existingFacts, err := database.GetAuthorProfile(authorChannelID)
+		if err != nil {
+			log.Printf("Erro ao buscar perfil do autor para atualização: %v", err)
+			return
+		}
+
+		newFacts, err = llm.ExtractProfileFacts(ctx, comment.Snippet.TextOriginal, existingFacts, s.App.LLMClient)
+		if err != nil {
+			log.Printf("Erro ao extrair fatos do perfil do autor: %v", err)
+			return
+		}
+	}
+
+	if len(newFacts) == 0 {
+		return
+	}
+
+	if err := database.SaveAuthorFacts(authorChannelID, newFacts); err != nil {
+		log.Printf("Erro ao salvar fatos do perfil do autor: %v", err)
+	}
 }
 
 func (s *CommentService) loadMembersFromCSV(filename string) (map[string]bool, error) {

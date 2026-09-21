@@ -40,7 +40,8 @@ func main() {
 		fmt.Fprintf(os.Stderr, "  answer-comments -a           # Modo automático (publica sem confirmação)\n")
 		fmt.Fprintf(os.Stderr, "  answer-comments -t           # Usa transcrição dos vídeos como contexto\n")
 		fmt.Fprintf(os.Stderr, "  answer-comments -a -t        # Combina modo automático com transcrição\n")
-		fmt.Fprintf(os.Stderr, "  answer-comments -M           # Processa comentários de membros do canal\n\n")
+		fmt.Fprintf(os.Stderr, "  answer-comments -M           # Processa comentários de membros do canal\n")
+		fmt.Fprintf(os.Stderr, "  answer-comments -P           # Exibe o perfil conhecido do autor antes do comentário\n\n")
 	}
 
 	// Parse command line flags
@@ -55,6 +56,8 @@ func main() {
 	debugLogPath := flag.String("debug-log", "debug.log", "Caminho do arquivo de log de debug (requer --debug)")
 	membersMode := flag.Bool("members", false, "Habilita processamento de comentários de membros do canal (por padrão são ignorados)")
 	flag.BoolVar(membersMode, "M", false, "Atalho para --members")
+	showProfile := flag.Bool("show-profile", false, "Exibe na tela o perfil conhecido do autor (fatos aprendidos em interações anteriores) antes do comentário")
+	flag.BoolVar(showProfile, "P", false, "Atalho para --show-profile")
 	migrateSQLite := flag.String("migrate-sqlite", "", "Migra os dados de um arquivo SQLite legado (ex: data/comments.db) para o Postgres e sai")
 	flag.Parse()
 
@@ -88,6 +91,9 @@ func main() {
 	} else {
 		ui.PrintModeBanner("⭐", "Membros Ignorados", "Comentários de membros serão pulados automaticamente.", ui.FgBrightYellow)
 	}
+	if *showProfile {
+		ui.PrintModeBanner("🧠", "Exibição de Perfil Ativada", "O perfil conhecido do autor será exibido antes do comentário.", ui.FgBrightMagenta)
+	}
 
 	ctx := context.Background()
 
@@ -110,6 +116,7 @@ func main() {
 		AutoAnswerMode:    *autoAnswerMode,
 		TranscriptionMode: *transcriptionMode,
 		MembersMode:       *membersMode,
+		ShowProfile:       *showProfile,
 	}
 
 	if err := commentService.ProcessComments(ctx, opts); err != nil {

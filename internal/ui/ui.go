@@ -260,6 +260,31 @@ func PrintCommentMeta(videoTitle, authorLine, date string) {
 	fmt.Println("  " + FgBrightWhite + Bold + "👤" + Reset + " " + FgWhite + authorLine + Reset + sep + Dim + FgWhite + "📅 " + date + Reset)
 }
 
+// PrintAuthorProfile renders the known facts about the comment's author, if any.
+func PrintAuthorProfile(facts []string) {
+	if len(facts) == 0 {
+		return
+	}
+	fmt.Println()
+	fmt.Println("  " + FgBrightMagenta + Bold + "🧠 Perfil conhecido:" + Reset)
+	for _, fact := range facts {
+		fmt.Println("  " + FgMagenta + "• " + Reset + fact)
+	}
+}
+
+// PrintNewProfileFacts announces newly extracted facts about the comment's author,
+// right after the suggested answer is shown.
+func PrintNewProfileFacts(facts []string) {
+	if len(facts) == 0 {
+		return
+	}
+	fmt.Println()
+	fmt.Println("  " + FgBrightMagenta + Bold + "🧠 Novo(s) fato(s) identificado(s) sobre esta pessoa:" + Reset)
+	for _, fact := range facts {
+		fmt.Println("  " + FgMagenta + "• " + Reset + fact)
+	}
+}
+
 // ── Context Bar ───────────────────────────────────────────────────────────────
 
 // PrintContextBar renders a compact single-line summary of available context.

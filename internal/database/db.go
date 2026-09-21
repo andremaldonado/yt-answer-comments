@@ -62,6 +62,20 @@ func InitDB(databaseURL string) error {
 		return err
 	}
 
+	// Create author_profiles table if it doesn't exist
+	_, err = db.Exec(`
+		CREATE TABLE IF NOT EXISTS author_profiles (
+			id SERIAL PRIMARY KEY,
+			author_channel_id TEXT NOT NULL,
+			fact TEXT NOT NULL,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+			UNIQUE(author_channel_id, fact)
+		)
+	`)
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -117,6 +131,48 @@ func GetLastComments(author string, limit int) ([]models.Comment, error) {
 		comments = append(comments, c)
 	}
 	return comments, nil
+}
+
+// GetAuthorProfile retorna os fatos conhecidos sobre um autor, identificado pelo channel ID.
+func GetAuthorProfile(authorChannelID string) ([]string, error) {
+	rows, err := db.Query(`
+		SELECT fact
+		FROM author_profiles
+		WHERE author_channel_id = $1
+		ORDER BY created_at ASC
+	`, authorChannelID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var facts []string
+	for rows.Next() {
+		var fact string
+		if err := rows.Scan(&fact); err != nil {
+			return nil, err
+		}
+		facts = append(facts, fact)
+	}
+	return facts, rows.Err()
+}
+
+// SaveAuthorFacts insere novos fatos sobre um autor, ignorando os que já existem.
+func SaveAuthorFacts(authorChannelID string, facts []string) error {
+	for _, fact := range facts {
+		if fact == "" {
+			continue
+		}
+		_, err := db.Exec(`
+			INSERT INTO author_profiles (author_channel_id, fact)
+			VALUES ($1, $2)
+			ON CONFLICT (author_channel_id, fact) DO NOTHING
+		`, authorChannelID, fact)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // CloseDB closes the database connection
